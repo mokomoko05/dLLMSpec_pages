@@ -9,7 +9,7 @@
   --green: #2f765d;
   --amber: #9a6b22;
   --radius: 10px;
-  --sans: Inter, "Noto Sans SC", "Source Han Sans SC", "Microsoft YaHei", sans-serif;
+  --sans: "Times New Roman";
 }
 
 * {
@@ -37,7 +37,7 @@ body {
   color: var(--ink);
   background: var(--paper);
   font-family: var(--sans);
-  line-height: 1.55;
+  line-height: 1.22;
 }
 
 button,

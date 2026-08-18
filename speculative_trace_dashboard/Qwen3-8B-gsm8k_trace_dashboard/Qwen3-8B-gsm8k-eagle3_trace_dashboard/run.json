@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "run_id": "eagle3_official_seed42",
+  "algorithm": "eagle3",
+  "implementation": "eagle_official",
+  "target_model": "/state/partition/model/Qwen3-8B",
+  "draft_model": "/state/partition/model/drafters/qwen3_8b_eagle3_official",
+  "draft_model_info": {
+    "architecture": "LlamaForCausalLMEagle3",
+    "num_layers": 1,
+    "num_parameters": 399707776,
+    "checkpoint_bytes": 799493246,
+    "parameter_count_scope": "serialized draft checkpoint with reduced-vocabulary lm_head"
+  },
+  "temperature": 0.0,
+  "max_new_tokens": 2048,
+  "seed": 42,
+  "total_token": 24,
+  "depth": 6,
+  "top_k": 4,
+  "acceptance_semantics": "exact_argmax_prefix",
+  "prompt": "Janet’s ducks lay 16 eggs per day. She eats three for breakfast every morning and bakes muffins for her friends every day with four. She sells the remainder at the farmers' market daily for $2 per fresh duck egg. How much in dollars does she make every day at the farmers' market?\nPlease reason step by step, and put your final answer within \\boxed{}.",
+  "prompt_token_count": 92,
+  "tokenizer_class": "Qwen2TokenizerFast",
+  "tokenizer_is_fast": true,
+  "tokenizer_name_or_path": "/state/partition/model/Qwen3-8B",
+  "stop_token_ids": [
+    151645
+  ],
+  "trace_level": "summary",
+  "prompt_source": "tools/trace/gsm8k_sample_000.jsonl",
+  "prompt_sample_index": 0,
+  "prompt_dataset": "gsm8k",
+  "dataset_sample_index": 0,
+  "token_text_format": "incremental_tokenizer_decode_v2"
+}

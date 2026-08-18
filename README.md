@@ -1,20 +1,20 @@
-# 推测解码论文演进与本地复现地图
+# dLLMSpec 研究页面
 
-本目录提供一份可离线打开的中文交互式文档，按时间顺序梳理 EAGLE-3、DFlash、
-DDTree、Domino、DSpark、DominoTree、xPress 与 DARTree，并将仓库内已经完成的
-复现结果放回论文实验语境中对照。
+本仓库提供可离线打开的推测解码研究页面，包括 step-level trace、论文方法地图和
+DSpark 在线训练实验报告。首页是内容目录，各页面不依赖 CDN、外部字体、构建工具或后端。
 
 ## 使用方式
 
-直接用浏览器打开 `index.html`。页面不依赖 CDN、外部字体、构建工具或后端服务；
-依赖连线由内联 SVG 绘制，论文表格图片来自仓库内对应 PDF。
+直接用浏览器打开 `index.html`，再从目录进入各内容：
 
 ```bash
-xdg-open docs/speculative_decoding_landscape/index.html
+xdg-open index.html
 ```
 
 页面包含：
 
+- Qwen3-8B 在九个数据集上的 27 组 DFlash、DSpark、EAGLE-3 trace，以及九个三算法
+  汇总 dashboard；
 - 一篇独立的 DSpark Qwen3-8B 在线训练实验博客，串联 smoke、5K pilot、30K 两轮训练，
   解释 hidden-state 在线生成与真实 serving acceptance 评测流程；
 - 将八篇论文组织为“起点方法 → 结构化改进 → 混合与并行化”的紧凑依赖图；
@@ -58,26 +58,17 @@ backend 和统计口径。因此页面不对不匹配的绝对吞吐作统一排
 - DSpark dynamic tree 扩展：
   `agentWorkSpace/20260815_deepspec_dynamic_tree/TREE_ACCEPTANCE_REPORT.md`
 
-## 分支与变更边界
-
-这是文档与前端代码整理，不启动新实验，因此不新建 `agentWorkSpace/<timestamp>_*`
-目录。Table 3 汇总复用原实验目录，因为它是同一实验边界内的结果验收。HTML、CSS
-和 JavaScript 属于代码修改，按仓库规范在独立分支
-`docs/table3-specv2-paper-tabs` 完成。
-
-- 本次 clean 起点：`main` / `2ed074c`
-- 修改范围：`docs/speculative_decoding_landscape/` 与 Table 3 实验的精简结果文档
-- submodule：未修改
-- 正在运行的实验 worktree、进程与 GPU：未触碰
-
 ## 文件
 
-- `index.html`：语义结构与静态内容入口；
+- `index.html`、`catalog.css`：三项公开内容的站点目录；
+- `speculative-trace-dashboard.html`：九个数据集的 trace dashboard 集合索引；
+- `speculative_trace_dashboard/`：从实验目录公开的 27 组原始 trace、单算法页面和汇总页面；
+- `speculative-decoding-landscape.html`：八种并行 draft 方法的交互式依赖地图；
 - `dspark-online-training.html`：DSpark 在线训练实验过程、数据流、结果错配与后续建议；
-- `dspark-online-training.css`：实验博客的文章布局、流程图、数据图表与响应式样式；
+- `dspark-online-training.css`：实验报告的紧凑学术排版、流程图和响应式样式；
 - `styles.css`：紧凑依赖图、节点卡片和统一预览窗布局；
 - `app.js`：论文数据、依赖关系、SVG 连线与预览切换；
-- `method_summaries.md`：供首页摘要区加载的论文原文短摘录、中文翻译、机制解释与训练属性判定；
+- `method_summaries.md`：供方法地图加载的论文原文短摘录、中文翻译、机制解释与训练属性判定；
 - `assets/`：论文 Table 1、代表性表格页和 arXiv HTML 原始方法/结果图；
 - `README.md`：口径、来源与维护说明。
 

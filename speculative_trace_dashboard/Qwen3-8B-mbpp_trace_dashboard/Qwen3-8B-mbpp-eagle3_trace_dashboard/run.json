@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "run_id": "eagle3_official_seed42",
+  "algorithm": "eagle3",
+  "implementation": "eagle_official",
+  "target_model": "/state/partition/model/Qwen3-8B",
+  "draft_model": "/state/partition/model/drafters/qwen3_8b_eagle3_official",
+  "temperature": 0.0,
+  "max_new_tokens": 2048,
+  "seed": 42,
+  "total_token": 32,
+  "depth": 8,
+  "top_k": 4,
+  "acceptance_semantics": "exact_argmax_prefix",
+  "prompt": "Write a python function to remove first and last occurrence of a given character from the string.",
+  "prompt_token_count": 30,
+  "tokenizer_class": "Qwen2TokenizerFast",
+  "tokenizer_is_fast": true,
+  "tokenizer_name_or_path": "/state/partition/model/Qwen3-8B",
+  "stop_token_ids": [
+    151645
+  ],
+  "trace_level": "summary",
+  "prompt_source": "implementations/DeepSpec/eval_datasets/mbpp.jsonl",
+  "prompt_sample_index": 0,
+  "prompt_dataset": "mbpp",
+  "dataset_sample_index": 0,
+  "token_text_format": "incremental_tokenizer_decode_v2"
+}

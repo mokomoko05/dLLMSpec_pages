@@ -3,82 +3,63 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="EAGLE-3、DFlash 及后续推测解码方法的紧凑依赖图、论文主结果表与本地复现摘要。">
-    <title>推测解码方法依赖图</title>
-    <link rel="stylesheet" href="styles.css">
+    <meta name="description" content="dLLMSpec 推测解码论文与实验记录目录。">
+    <title>dLLMSpec · 内容目录</title>
+    <link rel="stylesheet" href="catalog.css">
   </head>
   <body>
-    <main class="workspace">
-      <header class="page-header">
-        <div>
-          <p class="kicker">SPECULATIVE DECODING · 2025–2026</p>
-          <h1>并行 Draft 方法依赖图</h1>
-        </div>
-        <div class="header-actions">
-          <p class="header-note">虚线表示直接方法继承，点线表示核心对比或共享基础。点击节点，在下方统一窗口切换方法图、代表性实验表图与本地复现明细。</p>
-          <a class="summary-link" href="dspark-online-training.html">实验博客：DSpark 在线训练，从 Smoke 到 30K ↗</a>
-          <a class="summary-link" href="#method-summary">点击方法卡片查看原文摘要 · 翻译 · 训练属性 ↓</a>
-        </div>
+    <main class="catalog">
+      <header class="catalog-header">
+        <p class="overline">dLLMSpec · RESEARCH NOTES</p>
+        <h1>推测解码研究记录</h1>
+        <p class="intro">论文关系、复现结果与训练实验的静态归档。页面可离线阅读，不依赖构建工具或外部服务。</p>
+        <dl class="catalog-meta">
+          <div><dt>内容</dt><dd>3 篇</dd></div>
+          <div><dt>主题</dt><dd>Speculative Decoding</dd></div>
+          <div><dt>更新</dt><dd>2026-08-19</dd></div>
+        </dl>
       </header>
 
-      <section class="graph-panel" aria-labelledby="graph-title">
-        <div class="panel-head">
-          <h2 id="graph-title">方法图</h2>
-          <div class="legend" role="group" aria-label="图例">
-            <span><i class="line inherit"></i>直接继承</span>
-            <span><i class="line compare"></i>核心对比 / 共享基础</span>
-            <span><i class="dot reproduced"></i>本地已复现</span>
-            <span class="training-key training-key-required">training</span>
-            <span class="training-key training-key-free">training-free</span>
+      <section class="contents" aria-labelledby="contents-title">
+        <h2 id="contents-title">目录</h2>
+        <a class="content-entry" href="speculative-trace-dashboard.html">
+          <span class="entry-number">01</span>
+          <div class="entry-main">
+            <div class="entry-type">交互式 Trace 集合</div>
+            <h3>Speculative Decoding Trace Dashboards</h3>
+            <p>在 Qwen3-8B 的九个数据集上，逐 step 对照 DFlash、DSpark 与 EAGLE-3 的 proposal、verification 和 acceptance。</p>
+            <div class="entry-tags"><span>9 datasets</span><span>27 traces</span><span>step explorer</span></div>
           </div>
-        </div>
-        <div class="graph-scroll" tabindex="0" aria-label="可横向滚动的方法依赖图">
-          <div class="graph-canvas" id="graph-canvas">
-            <div class="phase phase-origin">起点方法</div>
-            <div class="phase phase-refine">结构化改进</div>
-            <div class="phase phase-hybrid">混合与并行化</div>
-            <svg class="edge-layer" id="edge-layer" aria-hidden="true"></svg>
-            <div id="paper-nodes"></div>
-          </div>
-        </div>
-      </section>
+          <span class="entry-arrow" aria-hidden="true">→</span>
+        </a>
 
-      <section class="preview-panel" id="preview" aria-live="polite" aria-labelledby="preview-heading">
-        <h2 class="visually-hidden" id="preview-heading">论文详情与图表预览</h2>
-        <div class="preview-copy" id="preview-copy"></div>
-        <div class="artifact-preview">
-          <div class="image-toolbar">
-            <span id="preview-title">DFlash · Table 1</span>
-            <a id="open-image" href="" target="_blank" rel="noreferrer">打开原图 ↗</a>
+        <a class="content-entry" href="speculative-decoding-landscape.html">
+          <span class="entry-number">02</span>
+          <div class="entry-main">
+            <div class="entry-type">交互式论文地图</div>
+            <h3>并行 Draft 方法依赖图</h3>
+            <p>梳理 EAGLE-3、DFlash、DDTree、Domino、DSpark、DominoTree、xPress 与 DARTree 的继承关系、训练属性、论文结果及本地复现。</p>
+            <div class="entry-tags"><span>8 methods</span><span>paper summary</span><span>reproduction</span></div>
           </div>
-          <div class="preview-tabs" id="preview-tabs" role="tablist" aria-label="论文图表与本地复现结果"></div>
-          <p class="preview-summary" id="preview-summary"></p>
-          <div class="preview-content" id="preview-content" role="tabpanel" tabindex="0">
-            <div class="image-stage" id="image-stage">
-              <img id="preview-image" src="assets/dflash_table1.png" alt="DFlash 论文 Table 1 主结果表">
-            </div>
-            <div class="result-stage" id="result-stage" hidden></div>
-          </div>
-        </div>
-      </section>
+          <span class="entry-arrow" aria-hidden="true">→</span>
+        </a>
 
-      <section class="method-summary-panel" id="method-summary" aria-live="polite" aria-labelledby="method-summary-title">
-        <div class="method-summary-heading">
-          <div>
-            <p class="kicker">PAPER SUMMARY · 点击方法卡片更新</p>
-            <h2 id="method-summary-title">DFlash：原文摘录与方法解释</h2>
+        <a class="content-entry" href="dspark-online-training.html">
+          <span class="entry-number">03</span>
+          <div class="entry-main">
+            <div class="entry-type">实验报告</div>
+            <h3>DSpark 在线训练：从 Smoke 到 30K</h3>
+            <p>记录 Qwen3-8B online hidden-state 训练流程，比较 5K 与 30K checkpoints 的 validation proxy 和真实 HumanEval acceptance。</p>
+            <div class="entry-tags"><span>Qwen3-8B</span><span>online training</span><span>acceptance</span></div>
           </div>
-          <span id="method-summary-training" class="summary-training training-key training-key-required">training</span>
-        </div>
-        <div id="method-summary-content"><p>正在加载论文摘要…</p></div>
+          <span class="entry-arrow" aria-hidden="true">→</span>
+        </a>
       </section>
 
       <footer>
-        <span>数据截点：2026-08-18 · DFlash Table 3 Spec-v2 speculative 40/40 点完成</span>
-        <span>不同论文硬件、框架与 budget 不统一，不进行跨论文绝对吞吐排名。</span>
+        <span>所有数值以对应实验目录中的验收报告为准。</span>
+        <a href="https://github.com/mokomoko05/dLLMSpec" target="_blank" rel="noreferrer">Source repository ↗</a>
       </footer>
     </main>
-    <script src="method_summaries_data.js"></script>
-    <script src="app.js"></script>
   </body>
 </html>

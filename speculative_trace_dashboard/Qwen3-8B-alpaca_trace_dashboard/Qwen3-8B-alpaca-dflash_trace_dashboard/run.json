@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "run_id": "dflash_official_seed42",
+  "algorithm": "dflash",
+  "implementation": "dflash_official",
+  "target_model": "/state/partition/model/Qwen3-8B",
+  "draft_model": "/state/partition/model/drafters/Qwen3-8B-DFlash-b16",
+  "temperature": 0.0,
+  "max_new_tokens": 2048,
+  "seed": 42,
+  "block_size": 16,
+  "acceptance_semantics": "exact_argmax_prefix",
+  "attention": "flash_attention_2",
+  "prompt": "Give three tips for staying healthy.",
+  "prompt_token_count": 19,
+  "tokenizer_class": "Qwen2TokenizerFast",
+  "tokenizer_is_fast": true,
+  "tokenizer_name_or_path": "/state/partition/model/Qwen3-8B",
+  "stop_token_ids": [
+    151645
+  ],
+  "trace_level": "summary",
+  "prompt_source": "implementations/DeepSpec/eval_datasets/alpaca.jsonl",
+  "prompt_sample_index": 0,
+  "prompt_dataset": "alpaca",
+  "dataset_sample_index": 0,
+  "token_text_format": "incremental_tokenizer_decode_v2"
+}

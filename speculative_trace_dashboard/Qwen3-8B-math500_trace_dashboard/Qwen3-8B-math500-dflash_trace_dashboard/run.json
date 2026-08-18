@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "run_id": "dflash_official_seed42",
+  "algorithm": "dflash",
+  "implementation": "dflash_official",
+  "target_model": "/state/partition/model/Qwen3-8B",
+  "draft_model": "/state/partition/model/drafters/Qwen3-8B-DFlash-b16",
+  "draft_model_info": {
+    "architecture": "DFlashDraftModel",
+    "num_layers": 5,
+    "num_parameters": 1048626432,
+    "checkpoint_bytes": 2097259104,
+    "parameter_count_scope": "serialized draft checkpoint; target input embedding and lm_head are reused externally"
+  },
+  "temperature": 0.0,
+  "max_new_tokens": 2048,
+  "seed": 42,
+  "block_size": 16,
+  "acceptance_semantics": "exact_argmax_prefix",
+  "attention": "flash_attention_2",
+  "prompt": "Convert the point $(0,3)$ in rectangular coordinates to polar coordinates.  Enter your answer in the form $(r,\\theta),$ where $r > 0$ and $0 \\le \\theta < 2 \\pi.$\nPlease reason step by step, and put your final answer within \\boxed{}.",
+  "prompt_token_count": 75,
+  "tokenizer_class": "Qwen2TokenizerFast",
+  "tokenizer_is_fast": true,
+  "tokenizer_name_or_path": "/state/partition/model/Qwen3-8B",
+  "stop_token_ids": [
+    151645
+  ],
+  "trace_level": "summary",
+  "prompt_source": "tools/trace/math500_sample_000.jsonl",
+  "prompt_sample_index": 0,
+  "prompt_dataset": "math500",
+  "dataset_sample_index": 0,
+  "token_text_format": "incremental_tokenizer_decode_v2"
+}

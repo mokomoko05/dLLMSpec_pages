@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "run_id": "dspark_deepspec_seed42",
+  "algorithm": "dspark",
+  "implementation": "deepspec_official",
+  "target_model": "/state/partition/model/Qwen3-8B",
+  "draft_model": "/state/partition/model/drafters/dspark_qwen3_8b_block7",
+  "draft_model_info": {
+    "architecture": "Qwen3DSparkModel",
+    "num_layers": 5,
+    "num_parameters": 2371081729,
+    "checkpoint_bytes": 4742170330,
+    "parameter_count_scope": "serialized draft checkpoint including embedding, lm_head, Markov and confidence heads"
+  },
+  "temperature": 0.0,
+  "max_new_tokens": 2048,
+  "confidence_threshold": 0.0,
+  "seed": 42,
+  "block_size": 7,
+  "acceptance_semantics": "rejection_sampling_p_over_q",
+  "prompt": "Convert the point $(0,3)$ in rectangular coordinates to polar coordinates.  Enter your answer in the form $(r,\\theta),$ where $r > 0$ and $0 \\le \\theta < 2 \\pi.$\nPlease reason step by step, and put your final answer within \\boxed{}.",
+  "prompt_token_count": 75,
+  "tokenizer_class": "Qwen2Tokenizer",
+  "tokenizer_is_fast": true,
+  "tokenizer_name_or_path": "/state/partition/model/Qwen3-8B",
+  "stop_token_ids": [
+    151645,
+    151643
+  ],
+  "trace_level": "summary",
+  "prompt_source": "tools/trace/math500_sample_000.jsonl",
+  "prompt_sample_index": 0,
+  "prompt_dataset": "math500",
+  "dataset_sample_index": 0,
+  "token_text_format": "incremental_tokenizer_decode_v2"
+}

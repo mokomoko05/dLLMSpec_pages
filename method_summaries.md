@@ -197,4 +197,4 @@ DARTree 是 training-free 方法，把预训练 AR correction head 从单条链�
 
 ## 阅读顺序与证据边界
 
-建议先读 EAGLE-3（训练约束）→ DFlash（并行 block）→ Domino / DSpark / xPress（恢复块内依赖）→ DDTree / DominoTree / DARTree（扩大树覆盖）。本页的英文摘录均来自论文摘要，机制解释综合论文正文与仓库 reading notes；速度数字只作为原文定位，不替代 PDF 中完整的实验条件。每篇原文、arXiv、代码和本地复现入口仍以[交互式地图](index.html)中的链接为准。
+建议先读 EAGLE-3（训练约束）→ DFlash（并行 block）→ Domino / DSpark / xPress（恢复块内依赖）→ DDTree / DominoTree / DARTree（扩大树覆盖）。本页的英文摘录均来自论文摘要，机制解释综合论文正文与仓库 reading notes；速度数字只作为原文定位，不替代 PDF 中完整的实验条件。每篇原文、arXiv、代码和本地复现入口仍以[交互式地图](speculative-decoding-landscape.html)中的链接为准。

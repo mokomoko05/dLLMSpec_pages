@@ -1,0 +1,340 @@
+{
+  "schema_version": 1,
+  "collection": "speculative_trace_dashboard",
+  "naming": "<target-model>-<dataset>_trace_dashboard/<target-model>-<dataset>-<algorithm>_trace_dashboard",
+  "combinations": [
+    {
+      "target_model": "/state/partition/model/Qwen3-8B",
+      "dataset": "gsm8k",
+      "dataset_sample_index": 0,
+      "prompt_source": "tools/trace/gsm8k_sample_000.jsonl",
+      "max_new_tokens": 2048,
+      "temperature": 0.0,
+      "seed": 42,
+      "directory": "Qwen3-8B-gsm8k_trace_dashboard",
+      "combined_dashboard": "Qwen3-8B-gsm8k_trace_dashboard/Qwen3-8B-gsm8k_trace_dashboard.html",
+      "traces": [
+        {
+          "algorithm": "dflash",
+          "directory": "Qwen3-8B-gsm8k_trace_dashboard/Qwen3-8B-gsm8k-dflash_trace_dashboard",
+          "dashboard": "Qwen3-8B-gsm8k_trace_dashboard/Qwen3-8B-gsm8k-dflash_trace_dashboard/Qwen3-8B-gsm8k-dflash_trace_dashboard.html",
+          "draft_model": "/state/partition/model/drafters/Qwen3-8B-DFlash-b16",
+          "verify_steps": 62,
+          "reconstructed_tokens_through_eos": 330
+        },
+        {
+          "algorithm": "dspark",
+          "directory": "Qwen3-8B-gsm8k_trace_dashboard/Qwen3-8B-gsm8k-dspark_trace_dashboard",
+          "dashboard": "Qwen3-8B-gsm8k_trace_dashboard/Qwen3-8B-gsm8k-dspark_trace_dashboard/Qwen3-8B-gsm8k-dspark_trace_dashboard.html",
+          "draft_model": "/state/partition/model/drafters/dspark_qwen3_8b_block7",
+          "verify_steps": 54,
+          "reconstructed_tokens_through_eos": 330
+        },
+        {
+          "algorithm": "eagle3",
+          "directory": "Qwen3-8B-gsm8k_trace_dashboard/Qwen3-8B-gsm8k-eagle3_trace_dashboard",
+          "dashboard": "Qwen3-8B-gsm8k_trace_dashboard/Qwen3-8B-gsm8k-eagle3_trace_dashboard/Qwen3-8B-gsm8k-eagle3_trace_dashboard.html",
+          "draft_model": "/state/partition/model/drafters/qwen3_8b_eagle3_official",
+          "verify_steps": 69,
+          "reconstructed_tokens_through_eos": 296
+        }
+      ]
+    },
+    {
+      "target_model": "/state/partition/model/Qwen3-8B",
+      "dataset": "math500",
+      "dataset_sample_index": 0,
+      "prompt_source": "tools/trace/math500_sample_000.jsonl",
+      "max_new_tokens": 2048,
+      "temperature": 0.0,
+      "seed": 42,
+      "directory": "Qwen3-8B-math500_trace_dashboard",
+      "combined_dashboard": "Qwen3-8B-math500_trace_dashboard/Qwen3-8B-math500_trace_dashboard.html",
+      "traces": [
+        {
+          "algorithm": "dflash",
+          "directory": "Qwen3-8B-math500_trace_dashboard/Qwen3-8B-math500-dflash_trace_dashboard",
+          "dashboard": "Qwen3-8B-math500_trace_dashboard/Qwen3-8B-math500-dflash_trace_dashboard/Qwen3-8B-math500-dflash_trace_dashboard.html",
+          "draft_model": "/state/partition/model/drafters/Qwen3-8B-DFlash-b16",
+          "verify_steps": 45,
+          "reconstructed_tokens_through_eos": 273
+        },
+        {
+          "algorithm": "dspark",
+          "directory": "Qwen3-8B-math500_trace_dashboard/Qwen3-8B-math500-dspark_trace_dashboard",
+          "dashboard": "Qwen3-8B-math500_trace_dashboard/Qwen3-8B-math500-dspark_trace_dashboard/Qwen3-8B-math500-dspark_trace_dashboard.html",
+          "draft_model": "/state/partition/model/drafters/dspark_qwen3_8b_block7",
+          "verify_steps": 42,
+          "reconstructed_tokens_through_eos": 273
+        },
+        {
+          "algorithm": "eagle3",
+          "directory": "Qwen3-8B-math500_trace_dashboard/Qwen3-8B-math500-eagle3_trace_dashboard",
+          "dashboard": "Qwen3-8B-math500_trace_dashboard/Qwen3-8B-math500-eagle3_trace_dashboard/Qwen3-8B-math500-eagle3_trace_dashboard.html",
+          "draft_model": "/state/partition/model/drafters/qwen3_8b_eagle3_official",
+          "verify_steps": 76,
+          "reconstructed_tokens_through_eos": 273
+        }
+      ]
+    },
+    {
+      "target_model": "/state/partition/model/Qwen3-8B",
+      "dataset": "aime25",
+      "dataset_sample_index": 0,
+      "prompt_source": "implementations/DeepSpec/eval_datasets/aime25.jsonl",
+      "max_new_tokens": 2048,
+      "temperature": 0.0,
+      "seed": 42,
+      "directory": "Qwen3-8B-aime25_trace_dashboard",
+      "combined_dashboard": "Qwen3-8B-aime25_trace_dashboard/Qwen3-8B-aime25_trace_dashboard.html",
+      "traces": [
+        {
+          "algorithm": "dflash",
+          "directory": "Qwen3-8B-aime25_trace_dashboard/Qwen3-8B-aime25-dflash_trace_dashboard",
+          "dashboard": "Qwen3-8B-aime25_trace_dashboard/Qwen3-8B-aime25-dflash_trace_dashboard/Qwen3-8B-aime25-dflash_trace_dashboard.html",
+          "draft_model": "/state/partition/model/drafters/Qwen3-8B-DFlash-b16",
+          "verify_steps": 100,
+          "reconstructed_tokens_through_eos": 778
+        },
+        {
+          "algorithm": "dspark",
+          "directory": "Qwen3-8B-aime25_trace_dashboard/Qwen3-8B-aime25-dspark_trace_dashboard",
+          "dashboard": "Qwen3-8B-aime25_trace_dashboard/Qwen3-8B-aime25-dspark_trace_dashboard/Qwen3-8B-aime25-dspark_trace_dashboard.html",
+          "draft_model": "/state/partition/model/drafters/dspark_qwen3_8b_block7",
+          "verify_steps": 134,
+          "reconstructed_tokens_through_eos": 852
+        },
+        {
+          "algorithm": "eagle3",
+          "directory": "Qwen3-8B-aime25_trace_dashboard/Qwen3-8B-aime25-eagle3_trace_dashboard",
+          "dashboard": "Qwen3-8B-aime25_trace_dashboard/Qwen3-8B-aime25-eagle3_trace_dashboard/Qwen3-8B-aime25-eagle3_trace_dashboard.html",
+          "draft_model": "/state/partition/model/drafters/qwen3_8b_eagle3_official",
+          "verify_steps": 220,
+          "reconstructed_tokens_through_eos": 884
+        }
+      ]
+    },
+    {
+      "target_model": "/state/partition/model/Qwen3-8B",
+      "dataset": "mbpp",
+      "dataset_sample_index": 0,
+      "prompt_source": "implementations/DeepSpec/eval_datasets/mbpp.jsonl",
+      "max_new_tokens": 2048,
+      "temperature": 0.0,
+      "seed": 42,
+      "directory": "Qwen3-8B-mbpp_trace_dashboard",
+      "combined_dashboard": "Qwen3-8B-mbpp_trace_dashboard/Qwen3-8B-mbpp_trace_dashboard.html",
+      "traces": [
+        {
+          "algorithm": "dflash",
+          "directory": "Qwen3-8B-mbpp_trace_dashboard/Qwen3-8B-mbpp-dflash_trace_dashboard",
+          "dashboard": "Qwen3-8B-mbpp_trace_dashboard/Qwen3-8B-mbpp-dflash_trace_dashboard/Qwen3-8B-mbpp-dflash_trace_dashboard.html",
+          "draft_model": "/state/partition/model/drafters/Qwen3-8B-DFlash-b16",
+          "verify_steps": 40,
+          "reconstructed_tokens_through_eos": 235
+        },
+        {
+          "algorithm": "dspark",
+          "directory": "Qwen3-8B-mbpp_trace_dashboard/Qwen3-8B-mbpp-dspark_trace_dashboard",
+          "dashboard": "Qwen3-8B-mbpp_trace_dashboard/Qwen3-8B-mbpp-dspark_trace_dashboard/Qwen3-8B-mbpp-dspark_trace_dashboard.html",
+          "draft_model": "/state/partition/model/drafters/dspark_qwen3_8b_block7",
+          "verify_steps": 65,
+          "reconstructed_tokens_through_eos": 332
+        },
+        {
+          "algorithm": "eagle3",
+          "directory": "Qwen3-8B-mbpp_trace_dashboard/Qwen3-8B-mbpp-eagle3_trace_dashboard",
+          "dashboard": "Qwen3-8B-mbpp_trace_dashboard/Qwen3-8B-mbpp-eagle3_trace_dashboard/Qwen3-8B-mbpp-eagle3_trace_dashboard.html",
+          "draft_model": "/state/partition/model/drafters/qwen3_8b_eagle3_official",
+          "verify_steps": 75,
+          "reconstructed_tokens_through_eos": 302
+        }
+      ]
+    },
+    {
+      "target_model": "/state/partition/model/Qwen3-8B",
+      "dataset": "humaneval",
+      "dataset_sample_index": 0,
+      "prompt_source": "implementations/DeepSpec/eval_datasets/humaneval.jsonl",
+      "max_new_tokens": 2048,
+      "temperature": 0.0,
+      "seed": 42,
+      "directory": "Qwen3-8B-humaneval_trace_dashboard",
+      "combined_dashboard": "Qwen3-8B-humaneval_trace_dashboard/Qwen3-8B-humaneval_trace_dashboard.html",
+      "traces": [
+        {
+          "algorithm": "dflash",
+          "directory": "Qwen3-8B-humaneval_trace_dashboard/Qwen3-8B-humaneval-dflash_trace_dashboard",
+          "dashboard": "Qwen3-8B-humaneval_trace_dashboard/Qwen3-8B-humaneval-dflash_trace_dashboard/Qwen3-8B-humaneval-dflash_trace_dashboard.html",
+          "draft_model": "/state/partition/model/drafters/Qwen3-8B-DFlash-b16",
+          "verify_steps": 85,
+          "reconstructed_tokens_through_eos": 511
+        },
+        {
+          "algorithm": "dspark",
+          "directory": "Qwen3-8B-humaneval_trace_dashboard/Qwen3-8B-humaneval-dspark_trace_dashboard",
+          "dashboard": "Qwen3-8B-humaneval_trace_dashboard/Qwen3-8B-humaneval-dspark_trace_dashboard/Qwen3-8B-humaneval-dspark_trace_dashboard.html",
+          "draft_model": "/state/partition/model/drafters/dspark_qwen3_8b_block7",
+          "verify_steps": 88,
+          "reconstructed_tokens_through_eos": 512
+        },
+        {
+          "algorithm": "eagle3",
+          "directory": "Qwen3-8B-humaneval_trace_dashboard/Qwen3-8B-humaneval-eagle3_trace_dashboard",
+          "dashboard": "Qwen3-8B-humaneval_trace_dashboard/Qwen3-8B-humaneval-eagle3_trace_dashboard/Qwen3-8B-humaneval-eagle3_trace_dashboard.html",
+          "draft_model": "/state/partition/model/drafters/qwen3_8b_eagle3_official",
+          "verify_steps": 95,
+          "reconstructed_tokens_through_eos": 446
+        }
+      ]
+    },
+    {
+      "target_model": "/state/partition/model/Qwen3-8B",
+      "dataset": "livecodebench",
+      "dataset_sample_index": 0,
+      "prompt_source": "implementations/DeepSpec/eval_datasets/livecodebench.jsonl",
+      "max_new_tokens": 2048,
+      "temperature": 0.0,
+      "seed": 42,
+      "directory": "Qwen3-8B-livecodebench_trace_dashboard",
+      "combined_dashboard": "Qwen3-8B-livecodebench_trace_dashboard/Qwen3-8B-livecodebench_trace_dashboard.html",
+      "traces": [
+        {
+          "algorithm": "dflash",
+          "directory": "Qwen3-8B-livecodebench_trace_dashboard/Qwen3-8B-livecodebench-dflash_trace_dashboard",
+          "dashboard": "Qwen3-8B-livecodebench_trace_dashboard/Qwen3-8B-livecodebench-dflash_trace_dashboard/Qwen3-8B-livecodebench-dflash_trace_dashboard.html",
+          "draft_model": "/state/partition/model/drafters/Qwen3-8B-DFlash-b16",
+          "verify_steps": 11,
+          "reconstructed_tokens_through_eos": 73
+        },
+        {
+          "algorithm": "dspark",
+          "directory": "Qwen3-8B-livecodebench_trace_dashboard/Qwen3-8B-livecodebench-dspark_trace_dashboard",
+          "dashboard": "Qwen3-8B-livecodebench_trace_dashboard/Qwen3-8B-livecodebench-dspark_trace_dashboard/Qwen3-8B-livecodebench-dspark_trace_dashboard.html",
+          "draft_model": "/state/partition/model/drafters/dspark_qwen3_8b_block7",
+          "verify_steps": 13,
+          "reconstructed_tokens_through_eos": 73
+        },
+        {
+          "algorithm": "eagle3",
+          "directory": "Qwen3-8B-livecodebench_trace_dashboard/Qwen3-8B-livecodebench-eagle3_trace_dashboard",
+          "dashboard": "Qwen3-8B-livecodebench_trace_dashboard/Qwen3-8B-livecodebench-eagle3_trace_dashboard/Qwen3-8B-livecodebench-eagle3_trace_dashboard.html",
+          "draft_model": "/state/partition/model/drafters/qwen3_8b_eagle3_official",
+          "verify_steps": 22,
+          "reconstructed_tokens_through_eos": 73
+        }
+      ]
+    },
+    {
+      "target_model": "/state/partition/model/Qwen3-8B",
+      "dataset": "mt-bench",
+      "dataset_sample_index": 0,
+      "prompt_source": "implementations/DeepSpec/eval_datasets/mt-bench.jsonl",
+      "max_new_tokens": 2048,
+      "temperature": 0.0,
+      "seed": 42,
+      "directory": "Qwen3-8B-mt-bench_trace_dashboard",
+      "combined_dashboard": "Qwen3-8B-mt-bench_trace_dashboard/Qwen3-8B-mt-bench_trace_dashboard.html",
+      "traces": [
+        {
+          "algorithm": "dflash",
+          "directory": "Qwen3-8B-mt-bench_trace_dashboard/Qwen3-8B-mt-bench-dflash_trace_dashboard",
+          "dashboard": "Qwen3-8B-mt-bench_trace_dashboard/Qwen3-8B-mt-bench-dflash_trace_dashboard/Qwen3-8B-mt-bench-dflash_trace_dashboard.html",
+          "draft_model": "/state/partition/model/drafters/Qwen3-8B-DFlash-b16",
+          "verify_steps": 413,
+          "reconstructed_tokens_through_eos": 885
+        },
+        {
+          "algorithm": "dspark",
+          "directory": "Qwen3-8B-mt-bench_trace_dashboard/Qwen3-8B-mt-bench-dspark_trace_dashboard",
+          "dashboard": "Qwen3-8B-mt-bench_trace_dashboard/Qwen3-8B-mt-bench-dspark_trace_dashboard/Qwen3-8B-mt-bench-dspark_trace_dashboard.html",
+          "draft_model": "/state/partition/model/drafters/dspark_qwen3_8b_block7",
+          "verify_steps": 312,
+          "reconstructed_tokens_through_eos": 942
+        },
+        {
+          "algorithm": "eagle3",
+          "directory": "Qwen3-8B-mt-bench_trace_dashboard/Qwen3-8B-mt-bench-eagle3_trace_dashboard",
+          "dashboard": "Qwen3-8B-mt-bench_trace_dashboard/Qwen3-8B-mt-bench-eagle3_trace_dashboard/Qwen3-8B-mt-bench-eagle3_trace_dashboard.html",
+          "draft_model": "/state/partition/model/drafters/qwen3_8b_eagle3_official",
+          "verify_steps": 289,
+          "reconstructed_tokens_through_eos": 1001
+        }
+      ]
+    },
+    {
+      "target_model": "/state/partition/model/Qwen3-8B",
+      "dataset": "alpaca",
+      "dataset_sample_index": 0,
+      "prompt_source": "implementations/DeepSpec/eval_datasets/alpaca.jsonl",
+      "max_new_tokens": 2048,
+      "temperature": 0.0,
+      "seed": 42,
+      "directory": "Qwen3-8B-alpaca_trace_dashboard",
+      "combined_dashboard": "Qwen3-8B-alpaca_trace_dashboard/Qwen3-8B-alpaca_trace_dashboard.html",
+      "traces": [
+        {
+          "algorithm": "dflash",
+          "directory": "Qwen3-8B-alpaca_trace_dashboard/Qwen3-8B-alpaca-dflash_trace_dashboard",
+          "dashboard": "Qwen3-8B-alpaca_trace_dashboard/Qwen3-8B-alpaca-dflash_trace_dashboard/Qwen3-8B-alpaca-dflash_trace_dashboard.html",
+          "draft_model": "/state/partition/model/drafters/Qwen3-8B-DFlash-b16",
+          "verify_steps": 46,
+          "reconstructed_tokens_through_eos": 151
+        },
+        {
+          "algorithm": "dspark",
+          "directory": "Qwen3-8B-alpaca_trace_dashboard/Qwen3-8B-alpaca-dspark_trace_dashboard",
+          "dashboard": "Qwen3-8B-alpaca_trace_dashboard/Qwen3-8B-alpaca-dspark_trace_dashboard/Qwen3-8B-alpaca-dspark_trace_dashboard.html",
+          "draft_model": "/state/partition/model/drafters/dspark_qwen3_8b_block7",
+          "verify_steps": 25,
+          "reconstructed_tokens_through_eos": 147
+        },
+        {
+          "algorithm": "eagle3",
+          "directory": "Qwen3-8B-alpaca_trace_dashboard/Qwen3-8B-alpaca-eagle3_trace_dashboard",
+          "dashboard": "Qwen3-8B-alpaca_trace_dashboard/Qwen3-8B-alpaca-eagle3_trace_dashboard/Qwen3-8B-alpaca-eagle3_trace_dashboard.html",
+          "draft_model": "/state/partition/model/drafters/qwen3_8b_eagle3_official",
+          "verify_steps": 22,
+          "reconstructed_tokens_through_eos": 139
+        }
+      ]
+    },
+    {
+      "target_model": "/state/partition/model/Qwen3-8B",
+      "dataset": "arena-hard-v2",
+      "dataset_sample_index": 0,
+      "prompt_source": "implementations/DeepSpec/eval_datasets/arena-hard-v2.jsonl",
+      "max_new_tokens": 2048,
+      "temperature": 0.0,
+      "seed": 42,
+      "directory": "Qwen3-8B-arena-hard-v2_trace_dashboard",
+      "combined_dashboard": "Qwen3-8B-arena-hard-v2_trace_dashboard/Qwen3-8B-arena-hard-v2_trace_dashboard.html",
+      "traces": [
+        {
+          "algorithm": "dflash",
+          "directory": "Qwen3-8B-arena-hard-v2_trace_dashboard/Qwen3-8B-arena-hard-v2-dflash_trace_dashboard",
+          "dashboard": "Qwen3-8B-arena-hard-v2_trace_dashboard/Qwen3-8B-arena-hard-v2-dflash_trace_dashboard/Qwen3-8B-arena-hard-v2-dflash_trace_dashboard.html",
+          "draft_model": "/state/partition/model/drafters/Qwen3-8B-DFlash-b16",
+          "verify_steps": 253,
+          "reconstructed_tokens_through_eos": 951
+        },
+        {
+          "algorithm": "dspark",
+          "directory": "Qwen3-8B-arena-hard-v2_trace_dashboard/Qwen3-8B-arena-hard-v2-dspark_trace_dashboard",
+          "dashboard": "Qwen3-8B-arena-hard-v2_trace_dashboard/Qwen3-8B-arena-hard-v2-dspark_trace_dashboard/Qwen3-8B-arena-hard-v2-dspark_trace_dashboard.html",
+          "draft_model": "/state/partition/model/drafters/dspark_qwen3_8b_block7",
+          "verify_steps": 208,
+          "reconstructed_tokens_through_eos": 758
+        },
+        {
+          "algorithm": "eagle3",
+          "directory": "Qwen3-8B-arena-hard-v2_trace_dashboard/Qwen3-8B-arena-hard-v2-eagle3_trace_dashboard",
+          "dashboard": "Qwen3-8B-arena-hard-v2_trace_dashboard/Qwen3-8B-arena-hard-v2-eagle3_trace_dashboard/Qwen3-8B-arena-hard-v2-eagle3_trace_dashboard.html",
+          "draft_model": "/state/partition/model/drafters/qwen3_8b_eagle3_official",
+          "verify_steps": 252,
+          "reconstructed_tokens_through_eos": 790
+        }
+      ]
+    }
+  ]
+}

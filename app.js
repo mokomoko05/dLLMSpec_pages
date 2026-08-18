@@ -336,6 +336,10 @@ const methodSummaryPanel = document.querySelector("#method-summary");
 
 let selectedPaper = null;
 let methodSummarySource = window.methodSummarySource || "";
+methodSummarySource = methodSummarySource.replace(
+  "](index.html)中的链接为准。",
+  "](speculative-decoding-landscape.html)中的链接为准。"
+);
 
 function escapeSummary(value) {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");

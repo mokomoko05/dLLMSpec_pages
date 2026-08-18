@@ -22,7 +22,7 @@ xdg-open docs/speculative_decoding_landscape/index.html
   trade-off 等代表性实验；
 - 已完成复现的论文另有“本地复现结果”选项卡，直接显示 HTML 表格，不需要跳转到
   Markdown 报告；
-- 独立的 `method_summaries.md` 对八种方法逐篇摘录论文摘要、翻译关键段落、解释实现，
+- 独立的 `method_summaries.html` 对八种方法逐篇摘录论文摘要、翻译关键段落、解释实现，
   并明确标记 `training` / `training-free`；
 - 本地 PDF、arXiv、官方仓库和本地实验报告链接；
 - 小屏幕保持完整依赖图并允许横向滚动。
@@ -73,7 +73,7 @@ backend 和统计口径。因此页面不对不匹配的绝对吞吐作统一排
 - `index.html`：语义结构与静态内容入口；
 - `styles.css`：紧凑依赖图、节点卡片和统一预览窗布局；
 - `app.js`：论文数据、依赖关系、SVG 连线与预览切换；
-- `method_summaries.md`：论文原文短摘录、中文翻译、机制解释与训练属性判定；
+- `method_summaries.html`：可由 GitHub Pages 直接渲染的论文原文短摘录、中文翻译、机制解释与训练属性判定；
 - `assets/`：论文 Table 1、代表性表格页和 arXiv HTML 原始方法/结果图；
 - `README.md`：口径、来源与维护说明。
 

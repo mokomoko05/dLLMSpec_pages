@@ -406,7 +406,7 @@ function clearEdges() {
 
 function renderLinks(paper) {
   return [
-    `<a href="method_summaries.md#${paper.id}">摘要页</a>`,
+    `<a href="method_summaries.html#${paper.id}">摘要页</a>`,
     `<a href="${paper.pdf}">本地 PDF</a>`,
     `<a href="${paper.arxiv}">arXiv</a>`,
     paper.repo ? `<a href="${paper.repo}">官方 Repo</a>` : ""

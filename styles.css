@@ -139,6 +139,26 @@ h1 {
   font-size: 0.64rem;
 }
 
+.training-key {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 0.61rem;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.training-key-required {
+  color: #8b4e24;
+  background: #f9e7d8;
+}
+
+.training-key-free {
+  color: #27664e;
+  background: #e1f1e9;
+}
+
 .legend span {
   display: inline-flex;
   align-items: center;

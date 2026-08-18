@@ -15,6 +15,8 @@ xdg-open docs/speculative_decoding_landscape/index.html
 
 页面包含：
 
+- 一篇独立的 DSpark Qwen3-8B 在线训练实验博客，串联 smoke、5K pilot、30K 两轮训练，
+  解释 hidden-state 在线生成与真实 serving acceptance 评测流程；
 - 将八篇论文组织为“起点方法 → 结构化改进 → 混合与并行化”的紧凑依赖图；
 - 用虚线表示直接方法继承，用点线表示核心对比或共享基础；
 - 每张节点卡片内显示论文 `Table 1` 缩略图；
@@ -71,6 +73,8 @@ backend 和统计口径。因此页面不对不匹配的绝对吞吐作统一排
 ## 文件
 
 - `index.html`：语义结构与静态内容入口；
+- `dspark-online-training.html`：DSpark 在线训练实验过程、数据流、结果错配与后续建议；
+- `dspark-online-training.css`：实验博客的文章布局、流程图、数据图表与响应式样式；
 - `styles.css`：紧凑依赖图、节点卡片和统一预览窗布局；
 - `app.js`：论文数据、依赖关系、SVG 连线与预览切换；
 - `method_summaries.md`：供首页摘要区加载的论文原文短摘录、中文翻译、机制解释与训练属性判定；

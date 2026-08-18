@@ -3,375 +3,210 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="DSpark Qwen3-8B 在线 hidden-state 训练实验：从 smoke、5K pilot 到 30K 两轮训练，以及离线代理与真实 acceptance 的错配分析。">
-    <title>DSpark 在线训练实验：从 Smoke 到 30K</title>
+    <meta name="description" content="DSpark Qwen3-8B 在线 hidden-state 训练实验：从 smoke、5K pilot 到 30K 两轮训练。">
+    <title>DSpark 在线训练实验报告</title>
     <link rel="stylesheet" href="dspark-online-training.css">
   </head>
   <body>
-    <header class="site-nav">
-      <a class="site-brand" href="index.html" aria-label="返回内容目录">
-        <span class="brand-mark">dS</span>
-        <span>dLLMSpec Notes</span>
-      </a>
-      <nav aria-label="页面导航">
-        <a href="#journey">实验历程</a>
-        <a href="#workflow">Online 流程</a>
-        <a href="#results">结果</a>
-        <a class="nav-map" href="index.html">内容目录</a>
-      </nav>
-    </header>
+    <nav class="top-nav" aria-label="站点导航">
+      <a href="index.html">← 内容目录</a>
+      <span>dLLMSpec 实验报告</span>
+    </nav>
 
     <main>
       <article>
-        <header class="hero">
-          <div class="hero-copy">
-            <div class="eyebrow-row">
-              <span class="eyebrow">EXPERIMENT LOG · 2026.08.16–17</span>
-              <span class="status"><i></i>3 stages completed</span>
-            </div>
-            <h1>DSpark 在线训练：<br>从一条可跑通的链路，到一个反直觉的结果</h1>
-            <p class="dek">我们用 Qwen3-8B 作冻结 verifier，把 hidden states 按需送给 draft trainer。Smoke、5K pilot 和 30K × 2 epochs 全部成功跑完，但更多数据与更低 validation loss 并没有带来更长的真实 acceptance。</p>
-            <div class="hero-meta">
-              <span>4 × A100 80GB</span>
-              <span>Qwen3-8B verifier</span>
-              <span>HumanEval · 80 requests</span>
-            </div>
-          </div>
-          <aside class="hero-finding" aria-label="核心发现">
-            <p class="finding-label">核心发现</p>
-            <p class="finding-number"><span>2.850</span><small>offline proxy</small></p>
-            <div class="finding-arrow">↓ <strong>错配</strong></div>
-            <p class="finding-number finding-real"><span>1.382</span><small>real acceptance</small></p>
-            <p class="finding-note">30K epoch 1 的离线代理比 5K 高 47%，真实接受长度却低 8.7%。</p>
-          </aside>
+        <header class="article-header">
+          <h1>DSpark 在线训练实验：从 Smoke 到 30K</h1>
+          <p class="subtitle">Qwen3-8B online hidden-state 训练、延迟分析与真实 acceptance 评测</p>
+          <dl class="article-meta">
+            <div><dt>实验时间</dt><dd>2026-08-16—17</dd></div>
+            <div><dt>硬件</dt><dd>4 × NVIDIA A100 80GB</dd></div>
+            <div><dt>Verifier</dt><dd>Qwen3-8B</dd></div>
+            <div><dt>状态</dt><dd>已完成</dd></div>
+          </dl>
         </header>
 
-        <section class="lead-conclusion" aria-label="一句话结论">
-          <span class="conclusion-index">01</span>
-          <p><strong>先修评测信号，再扩大训练规模。</strong> 当前 validation proxy 不能用于 checkpoint 选择；在统一真实 serving 口径前，继续增加数据或 epoch 只会更确定地优化错误目标。</p>
+        <section class="abstract" aria-labelledby="abstract-title">
+          <h2 id="abstract-title">摘要</h2>
+          <p>本实验验证 DSpark 在当前 Speculators 和 vLLM 环境中的在线训练流程，并依次完成 smoke、5K pilot 和 30K × 2 epochs 三个阶段。这里的“在线”是指 draft model 训练时按需从冻结的 Qwen3-8B verifier 获取 hidden states，并不更新 verifier 权重。</p>
+          <p>工程链路可以稳定运行，但训练指标与真实 serving 结果出现明显错配：从 5K 扩展到 30K 后，validation proxy accept length 从 1.9392 提高到 2.850，真实 HumanEval acceptance length 却从 1.514327 降至 1.381908。因此，当前 validation proxy 不适合用于 checkpoint 选择。在继续扩大数据和训练轮数前，应先统一评测口径并检查训练目标与 serving 分布的差异。</p>
         </section>
 
-        <section class="section" id="journey">
-          <div class="section-heading">
-            <div>
-              <p class="section-kicker">THE JOURNEY</p>
-              <h2>三段实验，一条完整证据链</h2>
-            </div>
-            <p>先证明工程链路成立，再验证规模化训练，最后检查训练指标是否真的兑现为线上收益。</p>
-          </div>
+        <nav class="toc" aria-labelledby="toc-title">
+          <h2 id="toc-title">目录</h2>
+          <ol>
+            <li><a href="#setup">实验设置</a></li>
+            <li><a href="#stages">实验过程</a></li>
+            <li><a href="#workflow">在线训练与评测流程</a></li>
+            <li><a href="#latency">延迟与资源</a></li>
+            <li><a href="#results">结果</a></li>
+            <li><a href="#issues">问题记录</a></li>
+            <li><a href="#conclusion">结论</a></li>
+          </ol>
+        </nav>
 
-          <div class="stage-line" aria-label="三阶段实验时间线">
-            <article class="stage-card stage-smoke">
-              <div class="stage-top">
-                <span class="stage-number">01</span>
-                <time datetime="2026-08-16T15:45:29+08:00">08.16 · Smoke</time>
-              </div>
-              <h3>先让链路真的走一遍</h3>
-              <p>4 条本地对话，3 train / 1 validation；GPU 0 运行 verifier，GPU 1 训练，完成一次真实 optimizer step。</p>
-              <dl class="mini-metrics">
-                <div><dt>train loss</dt><dd>2.316</dd></div>
-                <div><dt>val loss</dt><dd>1.365</dd></div>
-                <div><dt>steps</dt><dd>1</dd></div>
-              </dl>
-              <p class="stage-verdict success">端到端链路通过</p>
-            </article>
-
-            <article class="stage-card stage-pilot">
-              <div class="stage-top">
-                <span class="stage-number">02</span>
-                <time datetime="2026-08-16T18:15:30+08:00">08.16 · 5K Pilot</time>
-              </div>
-              <h3>第一次看见真实 acceptance</h3>
-              <p>5,000 条重生成样本，1 epoch、1,204 steps；GPU 0 服务 hidden states，GPU 1–3 三卡 DDP 训练。</p>
-              <dl class="mini-metrics">
-                <div><dt>proxy</dt><dd>1.939</dd></div>
-                <div><dt>real</dt><dd>1.514</dd></div>
-                <div><dt>step</dt><dd>4.1–4.5s</dd></div>
-              </dl>
-              <p class="stage-verdict warning">代理已偏乐观 28.1%</p>
-            </article>
-
-            <article class="stage-card stage-scale">
-              <div class="stage-top">
-                <span class="stage-number">03</span>
-                <time datetime="2026-08-16T21:08:37+08:00">08.16–17 · 30K × 2</time>
-              </div>
-              <h3>规模放大，趋势却反转</h3>
-              <p>从 5K 权重初始化，使用 30,000 条无重叠新数据训练两轮；共 14,425 steps，端到端 14h 20m。</p>
-              <dl class="mini-metrics">
-                <div><dt>best proxy</dt><dd>2.850</dd></div>
-                <div><dt>best real</dt><dd>1.392</dd></div>
-                <div><dt>errors</dt><dd>0</dd></div>
-              </dl>
-              <p class="stage-verdict danger">离线越好，线上越差</p>
-            </article>
-          </div>
+        <section id="setup">
+          <h2>1. 实验设置</h2>
+          <p>训练使用一张 GPU 运行 vLLM hidden-state server，其余 GPU 运行 DSpark trainer。Verifier 始终冻结，仅作为多层目标表征的提供者。</p>
+          <table>
+            <tbody>
+              <tr><th>Target / verifier</th><td>Qwen3-8B，BF16</td></tr>
+              <tr><th>Hidden-state server</th><td>GPU 0，vLLM 0.26.0</td></tr>
+              <tr><th>Trainer</th><td>Smoke 使用 GPU 1；正式训练使用 GPU 1–3 三卡 DDP</td></tr>
+              <tr><th>Target layers</th><td>正式训练使用 1、9、17、25、33</td></tr>
+              <tr><th>Draft model</th><td>5-layer DSpark；正式 serving 提议 7 draft tokens</td></tr>
+              <tr><th>Attention</th><td>SDPA；当前 PyTorch 2.11 / A100 环境不使用 FlexAttention</td></tr>
+              <tr><th>Online data policy</th><td>hidden-state 文件生成后消费并删除（<code>on-generate=delete</code>）</td></tr>
+            </tbody>
+          </table>
         </section>
 
-        <section class="definition-band">
-          <div class="definition-title">
-            <span>ONLINE ≠</span>
-            <strong>更新大模型</strong>
-          </div>
-          <p>这里的 “online” 指训练 draft model 时，按需从正在运行的 Qwen3-8B verifier 生成目标 hidden states。Verifier 权重始终冻结；被优化的只有 DSpark draft model。</p>
+        <section id="stages">
+          <h2>2. 实验过程</h2>
+          <table>
+            <caption>表 1. 三阶段实验概览</caption>
+            <thead>
+              <tr><th>阶段</th><th>数据</th><th>训练</th><th>主要目的</th><th>结果</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>Smoke</td><td>4 条</td><td>1 step</td><td>验证完整链路</td><td>成功</td></tr>
+              <tr><td>5K pilot</td><td>5,000 条</td><td>1 epoch / 1,204 steps</td><td>获得首个可评测 checkpoint</td><td>真实 accept 1.514327</td></tr>
+              <tr><td>30K</td><td>30,000 条新数据</td><td>2 epochs / 14,425 steps</td><td>检查规模化训练收益</td><td>离线提高，线上降低</td></tr>
+            </tbody>
+          </table>
+
+          <h3>2.1 Smoke</h3>
+          <p>Smoke 使用 4 条本地 ShareGPT 格式对话，其中 3 条训练、1 条验证。GPU 0 运行 verifier，GPU 1 执行单进程训练。最终运行完成 hidden-state 请求、前向与反向传播、一次 optimizer step、验证和 checkpoint 保存。</p>
+          <ul>
+            <li>训练 loss：2.316。</li>
+            <li>验证 loss：1.365209。</li>
+            <li>成功运行目录：<code>runs/20260816_175207/</code>。</li>
+          </ul>
+
+          <h3>2.2 5K pilot</h3>
+          <p>Pilot 使用 5,000 条重新生成的 Qwen3-8B 样本，训练一轮，共 1,204 optimizer steps。序列长度为 4096；由于 completion 还会请求一个额外 token，vLLM 的服务上限必须至少设为 4097。</p>
+          <ul>
+            <li>稳态训练速度约 4.1–4.5 秒/step。</li>
+            <li>在线 hidden-state fetch 约占单步时间的 42%–54%。</li>
+            <li>Validation loss 为 0.7738，proxy accept length 为 1.9392。</li>
+            <li>真实 HumanEval acceptance length 为 1.514327。</li>
+          </ul>
+
+          <h3>2.3 30K × 2 epochs</h3>
+          <p>30K 实验从 5K 模型权重初始化，但重新初始化 optimizer 和 scheduler。30,000 条样本与 pilot 不重叠，其中 28,500 条用于训练、1,500 条用于验证。两轮共执行 14,425 optimizer steps。</p>
+          <ul>
+            <li>训练主体耗时 13 小时 50 分 40 秒。</li>
+            <li>包含预处理和两轮评测的端到端耗时为 14 小时 20 分 16 秒。</li>
+            <li>全程没有 OOM、NaN、NCCL 或 HTTP 错误。</li>
+            <li>Validation 指标继续改善，但两个 epoch 的真实 acceptance 都低于 5K pilot。</li>
+          </ul>
         </section>
 
-        <section class="section workflow-section" id="workflow">
-          <div class="section-heading">
-            <div>
-              <p class="section-kicker">ONLINE PIPELINE</p>
-              <h2>Hidden states 如何流过四张 GPU</h2>
-            </div>
-            <p>训练和 serving 是两个闭环：前者学习 draft，后者才测量 speculative decoding 真正接受了多少 token。</p>
-          </div>
+        <section id="workflow">
+          <h2>3. 在线训练与评测流程</h2>
+          <h3>3.1 训练流程</h3>
+          <ol>
+            <li>准备对话数据，完成 tokenize 和 train / validation split。</li>
+            <li>在 GPU 0 启动冻结的 Qwen3-8B vLLM hidden-state server。</li>
+            <li>GPU 1–3 上的 trainer 为当前样本请求缺失的目标层 hidden states。</li>
+            <li>vLLM 返回指定层表征；trainer 消费对应文件后立即删除。</li>
+            <li>DSpark 计算 token CE、TV distribution matching、confidence 和 Markov 相关损失。</li>
+            <li>各 DDP rank 完成 optimizer step，按周期执行 validation 并保存 checkpoint。</li>
+          </ol>
 
-          <div class="workflow-grid">
-            <div class="lane-label verifier-label">
-              <span>GPU 0</span>
-              <strong>Frozen verifier</strong>
-              <small>vLLM · Qwen3-8B</small>
-            </div>
-            <div class="lane-label trainer-label">
-              <span>GPU 1–3</span>
-              <strong>Draft trainer</strong>
-              <small>torchrun · 3-rank DDP</small>
-            </div>
-            <ol class="flow-steps">
-              <li class="flow-step step-data">
-                <span class="flow-index">01</span>
-                <div><strong>准备对话</strong><small>tokenize · train/val split</small></div>
-              </li>
-              <li class="flow-step step-request">
-                <span class="flow-index">02</span>
-                <div><strong>请求缺失表征</strong><small>completion + 1 token</small></div>
-              </li>
-              <li class="flow-step step-hidden">
-                <span class="flow-index">03</span>
-                <div><strong>返回目标层</strong><small>layers 1 · 9 · 17 · 25 · 33</small></div>
-              </li>
-              <li class="flow-step step-loss">
-                <span class="flow-index">04</span>
-                <div><strong>计算 Draft Loss</strong><small>CE + TV + confidence / Markov</small></div>
-              </li>
-              <li class="flow-step step-delete">
-                <span class="flow-index">05</span>
-                <div><strong>即用即删</strong><small>on-generate=delete</small></div>
-              </li>
-              <li class="flow-step step-update">
-                <span class="flow-index">06</span>
-                <div><strong>DDP 更新</strong><small>optimizer step · checkpoint</small></div>
-              </li>
-            </ol>
-          </div>
-
-          <div class="serving-flow" aria-label="真实线上评测流程">
-            <div class="serving-intro">
-              <p>训练结束不是终点</p>
-              <h3>真实 acceptance 必须回到 serving 环境测</h3>
-            </div>
-            <ol>
-              <li><span>1</span>隔离并转换 checkpoint</li>
-              <li><span>2</span>vLLM V2 加载 target + DSpark</li>
-              <li><span>3</span>GuideLLM 发出 HumanEval 流量</li>
-              <li><span>4</span>汇总 accepted tokens / drafts</li>
-            </ol>
-          </div>
-
-          <div class="latency-note">
-            <div class="latency-donut" aria-label="5K pilot 中 hidden-state 获取占单步时间 42% 到 54%">
-              <span>42–54<small>%</small></span>
-            </div>
-            <div>
-              <p class="section-kicker">WHERE THE TIME GOES</p>
-              <h3>Hidden-state fetch 是 5K pilot 的主要等待项</h3>
-              <p>稳态单步 4.1–4.5 秒，其中在线 fetch 占 42%–54%。30K 实验在相同角色分工下稳定到约 2.7–3.3 秒/step；首步因编译耗时 30 秒。</p>
-            </div>
-          </div>
+          <h3>3.2 真实 acceptance 评测</h3>
+          <ol>
+            <li>将训练 checkpoint 转换到隔离的 serving 目录。</li>
+            <li>使用 vLLM V2 runner 加载 Qwen3-8B target 和 DSpark draft model。</li>
+            <li>使用 Speculators evaluator 和 GuideLLM 发送 HumanEval 请求。</li>
+            <li>从 serving metrics 汇总 draft 数、accepted tokens 和逐位置接受率。</li>
+          </ol>
+          <p class="note">训练 validation 的 proxy accept length 不经过完整 serving 路径，因此只能视为代理指标，不能代替真实 speculative decoding acceptance。</p>
         </section>
 
-        <section class="section results-section" id="results">
-          <div class="section-heading">
-            <div>
-              <p class="section-kicker">RESULTS</p>
-              <h2>两把尺子，给出了相反答案</h2>
-            </div>
-            <p>Proxy 来自训练 validation；Real 来自同口径 vLLM V2 + GuideLLM HumanEval。它们不能互换。</p>
-          </div>
-
-          <div class="result-layout">
-            <div class="chart-card">
-              <div class="chart-legend">
-                <span><i class="proxy-dot"></i>Validation proxy</span>
-                <span><i class="real-dot"></i>Real HumanEval</span>
-              </div>
-              <div class="bar-chart" role="img" aria-label="5K、30K epoch 0 和 epoch 1 的 validation proxy 与真实 acceptance 对比">
-                <div class="chart-row">
-                  <div class="row-label"><strong>5K pilot</strong><small>baseline</small></div>
-                  <div class="bar-pair">
-                    <div class="bar proxy-bar" style="--size:68.0%"><span>1.939</span></div>
-                    <div class="bar real-bar" style="--size:53.1%"><span>1.514</span></div>
-                  </div>
-                </div>
-                <div class="chart-row">
-                  <div class="row-label"><strong>30K · epoch 0</strong><small>real best</small></div>
-                  <div class="bar-pair">
-                    <div class="bar proxy-bar" style="--size:98.6%"><span>2.809</span></div>
-                    <div class="bar real-bar" style="--size:48.8%"><span>1.392</span></div>
-                  </div>
-                </div>
-                <div class="chart-row">
-                  <div class="row-label"><strong>30K · epoch 1</strong><small>proxy best</small></div>
-                  <div class="bar-pair">
-                    <div class="bar proxy-bar" style="--size:100%"><span>2.850</span></div>
-                    <div class="bar real-bar" style="--size:48.5%"><span>1.382</span></div>
-                  </div>
-                </div>
-                <div class="axis"><span>0</span><span>1</span><span>2</span><span>2.85</span></div>
-              </div>
-            </div>
-
-            <aside class="result-callout">
-              <p class="section-kicker">THE GAP WIDENS</p>
-              <p class="gap-number">1.468</p>
-              <p class="gap-label">epoch 1 的 proxy–real 差值</p>
-              <hr>
-              <p>如果只看 validation，会选择 epoch 1；如果看真实解码，应选择 epoch 0；如果和三者比较，5K pilot 仍然最好。</p>
-            </aside>
-          </div>
-
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Checkpoint</th>
-                  <th>Validation loss</th>
-                  <th>Proxy accept</th>
-                  <th>Real accept</th>
-                  <th>相对 5K real</th>
-                  <th>选择结论</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <td><strong>5K pilot</strong></td>
-                  <td>0.7738</td>
-                  <td>1.9392</td>
-                  <td class="metric-best">1.514327</td>
-                  <td>baseline</td>
-                  <td><span class="table-tag best">全局 real 最佳</span></td>
-                </tr>
-                <tr>
-                  <td><strong>30K · epoch 0</strong></td>
-                  <td>0.627</td>
-                  <td>2.809</td>
-                  <td>1.392118</td>
-                  <td class="negative">−8.07%</td>
-                  <td><span class="table-tag">30K 内最佳</span></td>
-                </tr>
-                <tr>
-                  <td><strong>30K · epoch 1</strong></td>
-                  <td class="metric-best">0.621</td>
-                  <td class="metric-best">2.850</td>
-                  <td>1.381908</td>
-                  <td class="negative">−8.74%</td>
-                  <td><span class="table-tag reject">不按 proxy 选</span></td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-
-          <p class="protocol-note"><strong>不要直接横比官方 5.454539。</strong> 官方 DSpark 结果使用 DeepSpec evaluator、164 条 HumanEval、batch 1、non-thinking；本实验使用 Speculators / GuideLLM、80 条请求、concurrency 8。口径不同，但当前约四倍差距仍说明复现尚未对齐。</p>
+        <section id="latency">
+          <h2>4. 延迟与资源</h2>
+          <table>
+            <caption>表 2. 训练延迟与显存观测</caption>
+            <thead>
+              <tr><th>实验</th><th>稳态 step time</th><th>Hidden-state fetch</th><th>Verifier GPU</th><th>Trainer GPU</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>5K pilot</td><td>4.1–4.5 s</td><td>42%–54%</td><td>约 62.3 GiB</td><td>观测约 42.6 GiB</td></tr>
+              <tr><td>30K × 2</td><td>2.7–3.3 s</td><td>未单独汇总</td><td>约 62.0 GiB</td><td>每卡约 24.0 GiB</td></tr>
+            </tbody>
+          </table>
+          <p>30K 实验首步因编译耗时约 30 秒，后续进入稳定区间。5K pilot 表明 hidden-state 获取是单步延迟的主要组成部分之一，后续可以评估请求批量化、流水化和有限缓存，但这类优化不会直接解决 validation 与 serving 指标错配。</p>
         </section>
 
-        <section class="section debug-section" id="debugging">
-          <div class="section-heading">
-            <div>
-              <p class="section-kicker">WHAT BROKE FIRST</p>
-              <h2>真正花时间的，是把隐含假设逐个显式化</h2>
-            </div>
-            <p>这些失败不是旁枝：它们定义了当前环境中可复现的在线训练与评测配置。</p>
-          </div>
+        <section id="results">
+          <h2>5. 结果</h2>
+          <table>
+            <caption>表 3. Validation 与真实 HumanEval acceptance 对比</caption>
+            <thead>
+              <tr><th>Checkpoint</th><th>Validation loss</th><th>Proxy accept length</th><th>Real accept length</th><th>相对 5K real</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>5K pilot</td><td>0.7738</td><td>1.9392</td><td><strong>1.514327</strong></td><td>baseline</td></tr>
+              <tr><td>30K epoch 0</td><td>0.627</td><td>2.809</td><td>1.392118</td><td>−8.07%</td></tr>
+              <tr><td>30K epoch 1</td><td><strong>0.621</strong></td><td><strong>2.850</strong></td><td>1.381908</td><td>−8.74%</td></tr>
+            </tbody>
+          </table>
 
-          <div class="debug-grid">
-            <article>
-              <span class="debug-type">CLI</span>
-              <h3>vLLM 参数版本漂移</h3>
-              <p><code>--disable-log-requests</code> 在当前 vLLM 版本不受支持，删除后继续。</p>
-            </article>
-            <article>
-              <span class="debug-type">LINKER</span>
-              <h3>FlashInfer 找不到 <code>-lcuda</code></h3>
-              <p>直接调用环境 Python 绕过 activation hook；显式补全 library path 与 preload。</p>
-            </article>
-            <article>
-              <span class="debug-type">ATTENTION</span>
-              <h3>FlexAttention 无可用 kernel</h3>
-              <p>PyTorch 2.11 / A100 上触发 <code>NoValidChoicesError</code>；draft attention 固定为 SDPA。</p>
-            </article>
-            <article>
-              <span class="debug-type">LENGTH</span>
-              <h3>4096 不是服务端的 4096</h3>
-              <p>completion 还会请求 1 个 token，因此训练序列 4096 时，vLLM 上限必须设为 4097。</p>
-            </article>
-            <article>
-              <span class="debug-type">CONFIG</span>
-              <h3>V1 需要嵌套 mask 配置</h3>
-              <p><code>dflash_config.mask_token_id</code> 缺失后补齐，但这还不是最终问题。</p>
-            </article>
-            <article>
-              <span class="debug-type">RUNNER</span>
-              <h3>DSpark 被误路由为 Eagle</h3>
-              <p>V1 runner 访问不存在的 <code>mask_hidden</code>；真实评测最终固定使用 vLLM V2 runner。</p>
-            </article>
-          </div>
+          <p>如果按 validation loss 或 proxy accept length 选择 checkpoint，会选择 epoch 1；如果只在 30K 两轮中按真实 acceptance 选择，应选择 epoch 0；如果比较全部三个 checkpoint，5K pilot 的真实 acceptance 最高。这说明当前代理指标与 serving 行为之间存在显著分布或目标错配。</p>
+
+          <h3>5.1 HumanEval 评测口径</h3>
+          <p>三组 checkpoint 使用相同本地口径：Speculators evaluator、vLLM V2、GuideLLM 0.7.3、HumanEval 前 80 条、temperature 1.0、最大并发 8、最大输出 4096。</p>
+          <p>官方 Qwen3-8B DSpark 报告的 acceptance length 为 5.454539，但使用 DeepSpec evaluator、164 条 HumanEval、batch 1 和 non-thinking。两者不是严格同口径，不能直接排名；当前约四倍差距仍表明本地复现尚未对齐。</p>
+
+          <h3>5.2 5K checkpoint 的逐位置接受率</h3>
+          <table>
+            <thead><tr><th>位置</th><th>0</th><th>1</th><th>2</th><th>3</th><th>4</th><th>5</th><th>6</th></tr></thead>
+            <tbody><tr><th>接受率</th><td>0.323389</td><td>0.122219</td><td>0.043342</td><td>0.016344</td><td>0.006438</td><td>0.001914</td><td>0.000681</td></tr></tbody>
+          </table>
+          <p>接受率随位置快速衰减，说明后缀质量仍是主要问题。</p>
         </section>
 
-        <section class="section lessons-section">
-          <div class="section-heading">
-            <div>
-              <p class="section-kicker">TAKEAWAYS</p>
-              <h2>下一轮实验，应该改变什么</h2>
-            </div>
-          </div>
-          <ol class="lessons-list">
-            <li>
-              <span>01</span>
-              <div><h3>把真实 acceptance 前移</h3><p>每个 checkpoint 都跑一组小型、固定 seed 的 serving eval，不再用 validation proxy 代替选择信号。</p></div>
-            </li>
-            <li>
-              <span>02</span>
-              <div><h3>先统一官方评测口径</h3><p>用相同 evaluator、164 条 HumanEval、batch 1 与 non-thinking 配置重测三组 checkpoint，再讨论模型差异。</p></div>
-            </li>
-            <li>
-              <span>03</span>
-              <div><h3>检查目标函数和数据分布</h3><p>优先审计 confidence / Markov loss、训练数据生成方式，以及长位置接受率快速衰减的原因。</p></div>
-            </li>
-            <li>
-              <span>04</span>
-              <div><h3>优化在线数据供给</h3><p>针对 hidden-state fetch 的 42%–54% 占比做批量、流水化和缓存实验，但保留即用即删的磁盘策略。</p></div>
-            </li>
+        <section id="issues">
+          <h2>6. 问题记录</h2>
+          <table>
+            <thead><tr><th>问题</th><th>原因或现象</th><th>处理</th></tr></thead>
+            <tbody>
+              <tr><td>vLLM CLI 参数不兼容</td><td>当前版本不支持 <code>--disable-log-requests</code></td><td>删除该参数</td></tr>
+              <tr><td>FlashInfer 链接失败</td><td>直接调用环境 Python 时找不到 <code>-lcuda</code></td><td>补全 library path 与 preload</td></tr>
+              <tr><td>FlexAttention 编译失败</td><td>PyTorch 2.11 / A100 上触发 <code>NoValidChoicesError</code></td><td>固定使用 SDPA</td></tr>
+              <tr><td>4096-token 请求返回 HTTP 400</td><td>completion 额外请求一个 token</td><td>vLLM 上限设为至少 4097</td></tr>
+              <tr><td>V1 runner 配置错误</td><td>需要嵌套的 <code>dflash_config.mask_token_id</code></td><td>补齐配置</td></tr>
+              <tr><td>V1 将 DSpark 路由为 Eagle</td><td>访问 DSpark 不存在的 <code>mask_hidden</code></td><td>评测固定使用 V2 runner</td></tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section id="conclusion">
+          <h2>7. 结论与后续</h2>
+          <ol>
+            <li>在线 hidden-state 生成、训练、验证、checkpoint 转换和 serving 评测链路均已跑通。</li>
+            <li>扩大到 30K 数据和两轮训练显著改善离线 validation，但没有提高真实 acceptance。</li>
+            <li>当前 validation proxy 不应作为 checkpoint 选择标准。</li>
+            <li>下一步应先用官方口径重测三个 checkpoint，再检查 confidence / Markov loss、训练数据生成方式和 evaluator 配置。</li>
+            <li>在真实 acceptance 信号稳定前，不建议继续单纯增加数据规模或训练轮数。</li>
           </ol>
         </section>
 
-        <section class="source-section" id="sources">
-          <div>
-            <p class="section-kicker">SOURCE TRAIL</p>
-            <h2>三份实验原始记录</h2>
-            <p>页面只汇总已经落盘并验收的结果；完整命令、逐次运行和轻量原始数据以实验目录为准。</p>
-          </div>
-          <div class="source-links">
-            <a href="https://github.com/mokomoko05/dLLMSpec/tree/main/agentWorkSpace/20260816_154529_dspark_speculators_train_smoke" target="_blank" rel="noreferrer"><span>01</span><strong>Train smoke</strong><small>EXPERIMENT_LOG.md ↗</small></a>
-            <a href="https://github.com/mokomoko05/dLLMSpec/tree/main/agentWorkSpace/20260816_181530_dspark_speculators_qwen3_8b_5k_pilot" target="_blank" rel="noreferrer"><span>02</span><strong>Qwen3-8B · 5K pilot</strong><small>EXPERIMENT_STATUS.md ↗</small></a>
-            <a href="https://github.com/mokomoko05/dLLMSpec/tree/main/agentWorkSpace/20260816_210837_dspark_speculators_qwen3_8b_30k_2ep" target="_blank" rel="noreferrer"><span>03</span><strong>Qwen3-8B · 30K × 2</strong><small>EXPERIMENT_STATUS.md ↗</small></a>
-          </div>
+        <section class="references">
+          <h2>原始记录</h2>
+          <ol>
+            <li><a href="https://github.com/mokomoko05/dLLMSpec/tree/main/agentWorkSpace/20260816_154529_dspark_speculators_train_smoke">DSpark train smoke</a></li>
+            <li><a href="https://github.com/mokomoko05/dLLMSpec/tree/main/agentWorkSpace/20260816_181530_dspark_speculators_qwen3_8b_5k_pilot">DSpark Qwen3-8B 5K pilot</a></li>
+            <li><a href="https://github.com/mokomoko05/dLLMSpec/tree/main/agentWorkSpace/20260816_210837_dspark_speculators_qwen3_8b_30k_2ep">DSpark Qwen3-8B 30K × 2 epochs</a></li>
+          </ol>
         </section>
       </article>
     </main>
 
-    <footer class="site-footer">
-      <span>dLLMSpec Experiment Notes</span>
-      <span>结果截点 · 2026-08-17</span>
-      <a href="index.html">返回内容目录 ↑</a>
+    <footer class="page-footer">
+      <a href="index.html">返回内容目录</a>
+      <span>结果截点：2026-08-17</span>
     </footer>
   </body>
 </html>

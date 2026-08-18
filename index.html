@@ -4,61 +4,46 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="description" content="dLLMSpec 推测解码论文与实验记录目录。">
-    <title>dLLMSpec · 内容目录</title>
+    <title>dLLMSpec 研究记录</title>
     <link rel="stylesheet" href="catalog.css">
   </head>
   <body>
     <main class="catalog">
       <header class="catalog-header">
-        <p class="overline">dLLMSpec · RESEARCH NOTES</p>
-        <h1>推测解码研究记录</h1>
-        <p class="intro">论文关系、复现结果与训练实验的静态归档。页面可离线阅读，不依赖构建工具或外部服务。</p>
-        <dl class="catalog-meta">
-          <div><dt>内容</dt><dd>3 篇</dd></div>
-          <div><dt>主题</dt><dd>Speculative Decoding</dd></div>
-          <div><dt>更新</dt><dd>2026-08-19</dd></div>
-        </dl>
+        <h1>dLLMSpec 研究记录</h1>
+        <p class="intro">推测解码论文、trace 和训练实验的静态记录。</p>
+        <p class="catalog-meta">最后更新：2026-08-19</p>
       </header>
 
       <section class="contents" aria-labelledby="contents-title">
-        <h2 id="contents-title">目录</h2>
-        <a class="content-entry" href="speculative-trace-dashboard.html">
-          <span class="entry-number">01</span>
-          <div class="entry-main">
-            <div class="entry-type">交互式 Trace 集合</div>
-            <h3>Speculative Decoding Trace Dashboards</h3>
-            <p>在 Qwen3-8B 的九个数据集上，逐 step 对照 DFlash、DSpark 与 EAGLE-3 的 proposal、verification 和 acceptance。</p>
-            <div class="entry-tags"><span>9 datasets</span><span>27 traces</span><span>step explorer</span></div>
-          </div>
-          <span class="entry-arrow" aria-hidden="true">→</span>
-        </a>
-
-        <a class="content-entry" href="speculative-decoding-landscape.html">
-          <span class="entry-number">02</span>
-          <div class="entry-main">
-            <div class="entry-type">交互式论文地图</div>
-            <h3>并行 Draft 方法依赖图</h3>
-            <p>梳理 EAGLE-3、DFlash、DDTree、Domino、DSpark、DominoTree、xPress 与 DARTree 的继承关系、训练属性、论文结果及本地复现。</p>
-            <div class="entry-tags"><span>8 methods</span><span>paper summary</span><span>reproduction</span></div>
-          </div>
-          <span class="entry-arrow" aria-hidden="true">→</span>
-        </a>
-
-        <a class="content-entry" href="dspark-online-training.html">
-          <span class="entry-number">03</span>
-          <div class="entry-main">
-            <div class="entry-type">实验报告</div>
-            <h3>DSpark 在线训练：从 Smoke 到 30K</h3>
-            <p>记录 Qwen3-8B online hidden-state 训练流程，比较 5K 与 30K checkpoints 的 validation proxy 和真实 HumanEval acceptance。</p>
-            <div class="entry-tags"><span>Qwen3-8B</span><span>online training</span><span>acceptance</span></div>
-          </div>
-          <span class="entry-arrow" aria-hidden="true">→</span>
-        </a>
+        <h2 id="contents-title">内容目录</h2>
+        <ol class="article-list">
+          <li>
+            <article>
+              <h3><a href="speculative-trace-dashboard.html">Speculative Decoding Trace Dashboards</a></h3>
+              <p>DFlash、DSpark 与 EAGLE-3 在 Qwen3-8B 九个数据集上的 step-level proposal、verification 和 acceptance trace。</p>
+              <p class="entry-meta">交互式数据 · 9 datasets · 27 traces</p>
+            </article>
+          </li>
+          <li>
+            <article>
+              <h3><a href="speculative-decoding-landscape.html">并行 Draft 方法依赖图</a></h3>
+              <p>八种推测解码方法的继承关系、论文摘要、训练属性和本地复现结果。</p>
+              <p class="entry-meta">论文笔记 · 8 methods</p>
+            </article>
+          </li>
+          <li>
+            <article>
+              <h3><a href="dspark-online-training.html">DSpark 在线训练：从 Smoke 到 30K</a></h3>
+              <p>Qwen3-8B online hidden-state 训练流程，以及 validation proxy 与真实 HumanEval acceptance 的实验对照。</p>
+              <p class="entry-meta">实验报告 · 2026-08-16—17</p>
+            </article>
+          </li>
+        </ol>
       </section>
 
       <footer>
-        <span>所有数值以对应实验目录中的验收报告为准。</span>
-        <a href="https://github.com/mokomoko05/dLLMSpec" target="_blank" rel="noreferrer">Source repository ↗</a>
+        <p>原始实验记录保存在 private dLLMSpec repository。</p>
       </footer>
     </main>
   </body>

@@ -335,7 +335,7 @@ const methodSummaryContent = document.querySelector("#method-summary-content");
 const methodSummaryPanel = document.querySelector("#method-summary");
 
 let selectedPaper = null;
-let methodSummarySource = "";
+let methodSummarySource = window.methodSummarySource || "";
 
 function escapeSummary(value) {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -611,15 +611,17 @@ selectPaper("dflash", false);
 
 window.addEventListener("resize", renderEdges);
 
-fetch("method_summaries.md")
-  .then((response) => {
-    if (!response.ok) throw new Error("摘要加载失败");
-    return response.text();
-  })
-  .then((source) => {
-    methodSummarySource = source;
-    if (selectedPaper && methodSummaryContent) updateMethodSummary(papers.find((paper) => paper.id === selectedPaper));
-  })
-  .catch(() => {
-    if (methodSummaryContent) methodSummaryContent.innerHTML = "<p>摘要文件暂时无法加载，请检查页面资源是否完整。</p>";
-  });
+if (!methodSummarySource) {
+  fetch("method_summaries.md")
+    .then((response) => {
+      if (!response.ok) throw new Error("摘要加载失败");
+      return response.text();
+    })
+    .then((source) => {
+      methodSummarySource = source;
+      if (selectedPaper && methodSummaryContent) updateMethodSummary(papers.find((paper) => paper.id === selectedPaper));
+    })
+    .catch(() => {
+      if (methodSummaryContent) methodSummaryContent.innerHTML = "<p>摘要文件暂时无法加载，请检查页面资源是否完整。</p>";
+    });
+}

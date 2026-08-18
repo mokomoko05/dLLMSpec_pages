@@ -419,6 +419,7 @@ function methodSummaryFor(paper) {
 }
 
 function updateMethodSummary(paper) {
+  if (!methodSummaryTitle || !methodSummaryTraining || !methodSummaryContent) return;
   methodSummaryTitle.textContent = `${paper.name}：原文摘录与方法解释`;
   methodSummaryTraining.textContent = paper.training.label;
   methodSummaryTraining.className = `summary-training training-key ${paper.training.label === "training-free" ? "training-key-free" : "training-key-required"}`;
@@ -601,7 +602,7 @@ function selectPaper(id, scroll) {
     <div class="preview-section preview-links">${renderLinks(paper)}</div>`;
   renderArtifactTabs(paper);
   highlightEdges(id);
-  if (scroll && window.innerWidth < 800) methodSummaryPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+  if (scroll && window.innerWidth < 800 && methodSummaryPanel) methodSummaryPanel.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 renderNodes();
@@ -617,8 +618,8 @@ fetch("method_summaries.md")
   })
   .then((source) => {
     methodSummarySource = source;
-    if (selectedPaper) updateMethodSummary(papers.find((paper) => paper.id === selectedPaper));
+    if (selectedPaper && methodSummaryContent) updateMethodSummary(papers.find((paper) => paper.id === selectedPaper));
   })
   .catch(() => {
-    methodSummaryContent.innerHTML = "<p>摘要文件暂时无法加载，请检查页面资源是否完整。</p>";
+    if (methodSummaryContent) methodSummaryContent.innerHTML = "<p>摘要文件暂时无法加载，请检查页面资源是否完整。</p>";
   });

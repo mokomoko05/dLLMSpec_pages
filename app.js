@@ -329,8 +329,101 @@ const previewTabs = document.querySelector("#preview-tabs");
 const previewSummary = document.querySelector("#preview-summary");
 const imageStage = document.querySelector("#image-stage");
 const resultStage = document.querySelector("#result-stage");
+const methodSummaryTitle = document.querySelector("#method-summary-title");
+const methodSummaryTraining = document.querySelector("#method-summary-training");
+const methodSummaryContent = document.querySelector("#method-summary-content");
+const methodSummaryPanel = document.querySelector("#method-summary");
 
 let selectedPaper = null;
+let methodSummarySource = "";
+
+function escapeSummary(value) {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function inlineSummary(value) {
+  return escapeSummary(value)
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/\*([^*]+)\*/g, "<em>$1</em>");
+}
+
+function renderSummaryMarkdown(markdown) {
+  const lines = markdown.split("\n");
+  let html = "";
+  let paragraph = [];
+  let listOpen = false;
+  const flush = () => {
+    if (paragraph.length) {
+      html += `<p>${paragraph.map(inlineSummary).join(" ")}</p>`;
+      paragraph = [];
+    }
+    if (listOpen) {
+      html += "</ul>";
+      listOpen = false;
+    }
+  };
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (!line.trim()) {
+      flush();
+      continue;
+    }
+    const heading = line.match(/^###\s+(.+)$/);
+    if (heading) {
+      flush();
+      html += `<h3>${inlineSummary(heading[1])}</h3>`;
+      continue;
+    }
+    if (line.startsWith("> ")) {
+      flush();
+      html += `<blockquote>${inlineSummary(line.slice(2))}</blockquote>`;
+      continue;
+    }
+    if (line.startsWith("- ")) {
+      if (!listOpen) {
+        flush();
+        html += "<ul>";
+        listOpen = true;
+      }
+      html += `<li>${inlineSummary(line.slice(2))}</li>`;
+      continue;
+    }
+    if (line.startsWith("|")) {
+      flush();
+      const rows = [];
+      while (index < lines.length && lines[index].startsWith("|")) {
+        const cells = lines[index].split("|").slice(1, -1).map((cell) => cell.trim());
+        if (!cells.every((cell) => /^[-:]+$/.test(cell))) rows.push(cells);
+        index += 1;
+      }
+      index -= 1;
+      if (rows.length) {
+        html += `<table><thead><tr>${rows[0].map((cell) => `<th>${inlineSummary(cell)}</th>`).join("")}</tr></thead><tbody>${rows.slice(1).map((row) => `<tr>${row.map((cell) => `<td>${inlineSummary(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+      }
+      continue;
+    }
+    if (!line.startsWith("## ") && !line.startsWith("# ") && !line.startsWith("---")) paragraph.push(line);
+  }
+  flush();
+  return html;
+}
+
+function methodSummaryFor(paper) {
+  if (!methodSummarySource) return "<p>正在加载论文摘要…</p>";
+  const lines = methodSummarySource.split("\n");
+  const start = lines.findIndex((line) => line === `## ${paper.name}`);
+  if (start < 0) return "<p>暂未找到该方法的摘要。</p>";
+  const end = lines.findIndex((line, index) => index > start && line.startsWith("## "));
+  return renderSummaryMarkdown(lines.slice(start + 1, end < 0 ? lines.length : end).join("\n"));
+}
+
+function updateMethodSummary(paper) {
+  methodSummaryTitle.textContent = `${paper.name}：原文摘录与方法解释`;
+  methodSummaryTraining.textContent = paper.training.label;
+  methodSummaryTraining.className = `summary-training training-key ${paper.training.label === "training-free" ? "training-key-free" : "training-key-required"}`;
+  methodSummaryContent.innerHTML = `<p class="summary-training-note"><strong>${paper.training.label}</strong>：${paper.training.note}</p>${methodSummaryFor(paper)}`;
+}
 
 function incomingNames(id) {
   return relations
@@ -406,7 +499,7 @@ function clearEdges() {
 
 function renderLinks(paper) {
   return [
-    `<a href="method_summaries.html#${paper.id}">摘要页</a>`,
+    `<a href="#method-summary">页面摘要</a>`,
     `<a href="${paper.pdf}">本地 PDF</a>`,
     `<a href="${paper.arxiv}">arXiv</a>`,
     paper.repo ? `<a href="${paper.repo}">官方 Repo</a>` : ""
@@ -496,6 +589,7 @@ function renderArtifactTabs(paper) {
 function selectPaper(id, scroll) {
   const paper = papers.find((item) => item.id === id);
   selectedPaper = id;
+  updateMethodSummary(paper);
   document.querySelectorAll(".paper-node").forEach((node) => node.classList.toggle("active", node.dataset.id === id));
   previewCopy.innerHTML = `<span class="preview-date">${paper.date} · ${paper.reproduced ? "本地已复现" : "本地未复现"}</span>
     <h2>${paper.name}</h2>
@@ -507,7 +601,7 @@ function selectPaper(id, scroll) {
     <div class="preview-section preview-links">${renderLinks(paper)}</div>`;
   renderArtifactTabs(paper);
   highlightEdges(id);
-  if (scroll && window.innerWidth < 800) document.querySelector("#preview").scrollIntoView({ behavior: "smooth", block: "start" });
+  if (scroll && window.innerWidth < 800) methodSummaryPanel.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 renderNodes();
@@ -515,3 +609,16 @@ renderEdges();
 selectPaper("dflash", false);
 
 window.addEventListener("resize", renderEdges);
+
+fetch("method_summaries.md")
+  .then((response) => {
+    if (!response.ok) throw new Error("摘要加载失败");
+    return response.text();
+  })
+  .then((source) => {
+    methodSummarySource = source;
+    if (selectedPaper) updateMethodSummary(papers.find((paper) => paper.id === selectedPaper));
+  })
+  .catch(() => {
+    methodSummaryContent.innerHTML = "<p>摘要文件暂时无法加载，请检查页面资源是否完整。</p>";
+  });

@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="EAGLE-3、DFlash 及后续推测解码方法的紧凑依赖图、论文主结果表与本地复现摘要。">
+    <title>推测解码方法依赖图</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <main class="workspace">
+      <header class="page-header">
+        <div>
+          <p class="kicker">SPECULATIVE DECODING · 2025–2026</p>
+          <h1>并行 Draft 方法依赖图</h1>
+        </div>
+        <p class="header-note">虚线表示直接方法继承，点线表示核心对比或共享基础。点击节点，在下方统一窗口切换方法图、代表性实验表图与本地复现明细。</p>
+      </header>
+
+      <section class="graph-panel" aria-labelledby="graph-title">
+        <div class="panel-head">
+          <h2 id="graph-title">方法图</h2>
+          <div class="legend" role="group" aria-label="图例">
+            <span><i class="line inherit"></i>直接继承</span>
+            <span><i class="line compare"></i>核心对比 / 共享基础</span>
+            <span><i class="dot reproduced"></i>本地已复现</span>
+          </div>
+        </div>
+        <div class="graph-scroll" tabindex="0" aria-label="可横向滚动的方法依赖图">
+          <div class="graph-canvas" id="graph-canvas">
+            <div class="phase phase-origin">起点方法</div>
+            <div class="phase phase-refine">结构化改进</div>
+            <div class="phase phase-hybrid">混合与并行化</div>
+            <svg class="edge-layer" id="edge-layer" aria-hidden="true"></svg>
+            <div id="paper-nodes"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="preview-panel" id="preview" aria-live="polite" aria-labelledby="preview-heading">
+        <h2 class="visually-hidden" id="preview-heading">论文详情与图表预览</h2>
+        <div class="preview-copy" id="preview-copy"></div>
+        <div class="artifact-preview">
+          <div class="image-toolbar">
+            <span id="preview-title">DFlash · Table 1</span>
+            <a id="open-image" href="" target="_blank" rel="noreferrer">打开原图 ↗</a>
+          </div>
+          <div class="preview-tabs" id="preview-tabs" role="tablist" aria-label="论文图表与本地复现结果"></div>
+          <p class="preview-summary" id="preview-summary"></p>
+          <div class="preview-content" id="preview-content" role="tabpanel" tabindex="0">
+            <div class="image-stage" id="image-stage">
+              <img id="preview-image" src="assets/dflash_table1.png" alt="DFlash 论文 Table 1 主结果表">
+            </div>
+            <div class="result-stage" id="result-stage" hidden></div>
+          </div>
+        </div>
+      </section>
+
+      <footer>
+        <span>数据截点：2026-08-18 · DFlash Table 3 Spec-v2 speculative 40/40 点完成</span>
+        <span>不同论文硬件、框架与 budget 不统一，不进行跨论文绝对吞吐排名。</span>
+      </footer>
+    </main>
+    <script src="app.js"></script>
+  </body>
+</html>

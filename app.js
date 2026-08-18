@@ -14,6 +14,7 @@ const papers = [
       { id: "tables2-4", label: "Tables 2–4 · 消融/Serving", src: "assets/eagle3_tables2_4.png", summary: "同页包含架构消融，以及 H100 上不同 batch size 的 SGLang throughput 和 batch=1 吞吐，用来连接算法改动与服务收益。" }
     ],
     kind: "自回归 draft · 多层特征融合 · tree verify",
+    training: { label: "training", note: "需训练与 target 配套的 EAGLE-3 draft model。" },
     summary: "取消显式 feature prediction 约束，融合 target 低、中、高层特征并直接预测 token；沿用 EAGLE-2 的 draft tree 并行验证。",
     models: "Vicuna-13B、LLaMA-3.1-8B、LLaMA-3.3-70B、DeepSeek-R1-Distill-LLaMA-8B",
     datasets: "MT-Bench、HumanEval、GSM8K、Alpaca、CNN/DailyMail",
@@ -28,7 +29,7 @@ const papers = [
         { title: "EAGLE-3 完整 MT-Bench", headers: ["范围", "本地 speedup", "论文 speedup", "本地 τ", "论文 τ", "偏差"], rows: [["80 题 / 20 turns", "4.3356×", "4.40×", "6.1917", "6.13", "−1.46% / +1.01%"]] }
       ]
     },
-    pdf: "https://github.com/mokomoko05/dLLMSpec/blob/main/papers/EAGLE-3_2503.01840v3.pdf",
+    pdf: "../../papers/EAGLE-3_2503.01840v3.pdf",
     arxiv: "https://arxiv.org/abs/2503.01840",
     repo: "https://github.com/SafeAILab/EAGLE",
     report: "../../agentWorkSpace/20260809_171833_eagle3_reproduction/README.md"
@@ -50,6 +51,7 @@ const papers = [
       { id: "table13", label: "Table 13 · Anchor 采样", src: "assets/dflash_table13.png", summary: "对比固定与随机 anchor 采样，验证训练数据增强能提高接受长度与最终 speedup。" }
     ],
     kind: "block diffusion · one-shot parallel draft",
+    training: { label: "training", note: "需训练 block-diffusion drafter；target 参数冻结。" },
     summary: "轻量 block-diffusion drafter 一次 forward 并行提出完整 block，并将 target 多层 hidden features 注入每层 KV cache。",
     models: "Qwen3-4B/8B、Qwen3-Coder-30B-A3B、LLaMA-3.1-8B",
     datasets: "7 个 math / code / chat 任务；另含 thinking、长上下文与 serving",
@@ -97,7 +99,7 @@ const papers = [
         ] }
       ]
     },
-    pdf: "https://github.com/mokomoko05/dLLMSpec/blob/main/papers/DFlash_2602.06036v2.pdf",
+    pdf: "../../papers/DFlash_2602.06036v2.pdf",
     arxiv: "https://arxiv.org/abs/2602.06036",
     repo: "https://github.com/z-lab/dflash",
     report: "../../agentWorkSpace/20260817_183558_dflash_table3_specv1_eagle3_qwen3/FINAL_SPECV2_RESULTS.md"
@@ -116,6 +118,7 @@ const papers = [
       { id: "distribution", label: "Figure 4 · 接受分布", src: "assets/ddtree_acceptance_histogram.svg", summary: "相对 DFlash，DDTree 把概率质量推向更长接受前缀，尤其增加完整 block 接受。" }
     ],
     kind: "marginal distributions · best-first draft tree",
+    training: { label: "training-free", note: "不新增训练；直接消费 DFlash 的逐位置分布构树。" },
     summary: "直接从 DFlash 各位置边缘分布用 best-first heap 选取 top-B 概率前缀，在不增加 drafter forward 的情况下构造验证树。",
     models: "Qwen3-4B、Qwen3-8B、Qwen3-Coder-30B-A3B",
     datasets: "10 个 math / code / instruction / dialogue 数据集",
@@ -124,7 +127,7 @@ const papers = [
     inherited: "DFlash marginals",
     reproduced: false,
     local: "尚无官方 DDTree 本地正式复现；DSpark dynamic-tree 是不同实现，不能替代本论文结果。",
-    pdf: "https://github.com/mokomoko05/dLLMSpec/blob/main/papers/DDTree_Accelerating_Speculative_Decoding_with_Block_Diffusion_Draft_Trees_arXiv-2604.12989v1.pdf",
+    pdf: "../../papers/DDTree_Accelerating_Speculative_Decoding_with_Block_Diffusion_Draft_Trees_arXiv-2604.12989v1.pdf",
     arxiv: "https://arxiv.org/abs/2604.12989",
     repo: "https://github.com/liranringel/ddtree",
     report: ""
@@ -145,6 +148,7 @@ const papers = [
       { id: "tables3-4", label: "Tables 3–4 · 同数据/Head 消融", src: "assets/domino_tables3_4.png", summary: "同训练数据比较隔离方法差异，并通过开关 Domino head 验证 causal correction 的独立贡献。" }
     ],
     kind: "parallel backbone · GRU causal correction",
+    training: { label: "training", note: "并行 backbone、Domino head 与 curriculum 都需要训练。" },
     summary: "保留 DFlash 式并行 backbone，再用轻量 GRU 沿已生成 token 顺序修正 logits，以较低成本恢复块内因果依赖。",
     models: "Qwen3-4B、Qwen3-8B",
     datasets: "8 个 math / code / chat 数据集",
@@ -153,7 +157,7 @@ const papers = [
     inherited: "DFlash-style backbone",
     reproduced: false,
     local: "仓库已收录论文与官方代码，尚无正式本地复现。",
-    pdf: "https://github.com/mokomoko05/dLLMSpec/blob/main/papers/Domino_Decoupling_Causal_Modeling_from_Autoregressive_Drafting_in_Speculative_Decoding_arXiv-2605.29707v1.pdf",
+    pdf: "../../papers/Domino_Decoupling_Causal_Modeling_from_Autoregressive_Drafting_in_Speculative_Decoding_arXiv-2605.29707v1.pdf",
     arxiv: "https://arxiv.org/abs/2605.29707",
     repo: "https://github.com/jianuo-huang/Domino",
     report: ""
@@ -173,6 +177,7 @@ const papers = [
       { id: "load", label: "Figure 8 · 负载自适应", src: "assets/dspark_load_adaptive.png", summary: "并发升高时 scheduler 自动缩小 verification budget，在吞吐与单请求 TPS 约束间调整。" }
     ],
     kind: "Markov/RNN head · confidence scheduling",
+    training: { label: "training", note: "需训练半自回归 head 与 confidence head。" },
     summary: "并行 backbone 加 sequential Markov/RNN head 提升 chain 质量，并用校准 confidence 在并发升高时动态收缩 verification budget。",
     models: "Qwen3-4B/8B/14B、Gemma-3-12B；生产 DeepSeek-V4",
     datasets: "9 个 math / code / chat 数据集与真实线上流量",
@@ -193,7 +198,7 @@ const papers = [
         { title: "Qwen3-14B · 单并发本机吞吐", headers: ["Variant", "请求", "tok/s", "相对 vanilla", "平均延迟"], rows: [["vanilla", "3030", "49.97", "1.000×", "10.968s"], ["DFlash", "3030", "141.49", "2.832×", "3.855s"], ["DSpark", "3030", "150.23", "3.007×", "3.646s"]] }
       ]
     },
-    pdf: "https://github.com/mokomoko05/dLLMSpec/blob/main/papers/DSpark_paper.pdf",
+    pdf: "../../papers/DSpark_paper.pdf",
     arxiv: "https://arxiv.org/abs/2607.05147",
     repo: "https://github.com/deepseek-ai/DeepSpec",
     report: "../../agentWorkSpace/20260811_174925_dspark_qwen3_8b_official_reproduction/FINAL_ACCEPTANCE_REPORT.md"
@@ -214,6 +219,7 @@ const papers = [
       { id: "tables7-8", label: "Tables 7–8 · Budget/候选宽度", src: "assets/dominotree_tables7_8.png", summary: "扫描 node budget 与 candidate width，展示接受长度收益、build 成本和 throughput 的折中。" }
     ],
     kind: "path-conditional tree · GPU-native builder",
+    training: { label: "training-free", note: "复用 Domino correction head，只新增 inference-time tree search。" },
     summary: "将 Domino 的 GRU correction 沿每条树路径参与评分，把 DDTree 的 marginal tree 升级为 path-conditional tree。",
     models: "Qwen3-4B、Qwen3-8B",
     datasets: "Domino 的 8 个 math / code / chat 数据集",
@@ -222,7 +228,7 @@ const papers = [
     inherited: "DDTree tree builder + Domino correction",
     reproduced: false,
     local: "尚无 DominoTree 官方 harness 的本地正式复现。复现时需保留不同 harness 各自的 AR 归一化口径。",
-    pdf: "https://github.com/mokomoko05/dLLMSpec/blob/main/papers/DominoTree_Conditional_Tree-Structured_Drafting_with_Domino_for_Speculative_Decoding_arXiv-2607.08642v2.pdf",
+    pdf: "../../papers/DominoTree_Conditional_Tree-Structured_Drafting_with_Domino_for_Speculative_Decoding_arXiv-2607.08642v2.pdf",
     arxiv: "https://arxiv.org/abs/2607.08642",
     repo: "https://github.com/slin-zhq/Domino-Tree",
     report: ""
@@ -242,6 +248,7 @@ const papers = [
       { id: "table3", label: "Table 3 · Refiner 延迟", src: "assets/xpress_table3.png", summary: "比较 K 次并行 Jacobi 与 15-step sequential Markov head 的每 block 延迟，解释并行 refinement 的系统优势。" }
     ],
     kind: "causal refiner · parallel Jacobi passes",
+    training: { label: "training", note: "causal refiner 与 DFlash drafter 联合训练。" },
     summary: "用小型 causal refiner 对整个 block 做若干次并行 Jacobi 更新，在恢复因果依赖的同时避免逐 token correction loop。",
     models: "Qwen3-8B + DFlash block-16",
     datasets: "7 个 math / code / chat 数据集",
@@ -250,7 +257,7 @@ const papers = [
     inherited: "DFlash backbone；对比 DSpark head",
     reproduced: false,
     local: "当前没有正式本地复现，也尚未确认官方开源实现。",
-    pdf: "https://github.com/mokomoko05/dLLMSpec/blob/main/papers/xPress_Parallel_Refinement_for_Diffusion_Drafters_in_Speculative_Decoding_arXiv-2608.02438v1.pdf",
+    pdf: "../../papers/xPress_Parallel_Refinement_for_Diffusion_Drafters_in_Speculative_Decoding_arXiv-2608.02438v1.pdf",
     arxiv: "https://arxiv.org/abs/2608.02438",
     repo: "",
     report: ""
@@ -270,6 +277,7 @@ const papers = [
       { id: "table4", label: "Table 4 · 并发 Serving", src: "assets/dartree_table4.png", summary: "SGLang、RTX 6000 Ada、concurrency 2–32 的 TPS/speedup，并对 DDTree/DARTree 使用负载自适应 budget。" }
     ],
     kind: "depth-wise batch expansion · deferred pruning",
+    training: { label: "training-free", note: "复用预训练 AR correction head，不训练新的 scorer。" },
     summary: "将预训练 AR correction head 扩展到多分支：同 depth 候选批量推进 correction state，最后再做简化 best-first pruning。",
     models: "Qwen3-4B、Qwen3-8B",
     datasets: "7 个 math / code / chat 数据集",
@@ -278,7 +286,7 @@ const papers = [
     inherited: "DFlash + DDTree + Domino correction head",
     reproduced: false,
     local: "尚无正式本地复现。本地 DSpark dynamic-tree 与其实现、预算和硬件均不同。",
-    pdf: "https://github.com/mokomoko05/dLLMSpec/blob/main/papers/DARTree_Speculative_Diffusion_Decoding_with_Autoregressive_Draft_Trees_arXiv-2608.13524v1.pdf",
+    pdf: "../../papers/DARTree_Speculative_Diffusion_Decoding_with_Autoregressive_Draft_Trees_arXiv-2608.13524v1.pdf",
     arxiv: "https://arxiv.org/abs/2608.13524",
     repo: "https://github.com/VILA-Lab/DARTree",
     report: ""
@@ -340,6 +348,7 @@ function renderNodes() {
         <span class="node-copy">
           <span class="node-meta"><time datetime="${paper.date}">${paper.date.slice(0, 7)}</time><span class="node-status${paper.reproduced ? "" : " pending"}">${paper.reproduced ? "已复现" : "未复现"}</span></span>
           <h3>${paper.name}</h3>
+          <span class="node-training ${paper.training.label === "training-free" ? "free" : "required"}">${paper.training.label}</span>
           <span class="node-kind">${paper.kind}</span>
           <span class="node-inherits">${incoming.length ? `← ${incoming.join(" + ")}` : paper.inherited}</span>
         </span>
@@ -397,6 +406,7 @@ function clearEdges() {
 
 function renderLinks(paper) {
   return [
+    `<a href="method_summaries.md#${paper.id}">摘要页</a>`,
     `<a href="${paper.pdf}">本地 PDF</a>`,
     `<a href="${paper.arxiv}">arXiv</a>`,
     paper.repo ? `<a href="${paper.repo}">官方 Repo</a>` : ""
@@ -490,7 +500,7 @@ function selectPaper(id, scroll) {
   previewCopy.innerHTML = `<span class="preview-date">${paper.date} · ${paper.reproduced ? "本地已复现" : "本地未复现"}</span>
     <h2>${paper.name}</h2>
     <p class="preview-paper-title">${paper.title}</p>
-    <div class="preview-section"><h3>方法</h3><p>${paper.summary}</p></div>
+    <div class="preview-section"><h3>方法</h3><p>${paper.summary}</p><p class="training-callout"><strong>${paper.training.label}</strong>：${paper.training.note}</p></div>
     <div class="preview-section"><h3>论文实验</h3><dl class="fact-list"><div><dt>模型</dt><dd>${paper.models}</dd></div><div><dt>数据</dt><dd>${paper.datasets}</dd></div><div><dt>指标</dt><dd>${paper.metrics}</dd></div></dl></div>
     <div class="preview-section"><h3>对比基线</h3><div class="chips">${paper.baselines.map((item) => `<span>${item}</span>`).join("")}</div></div>
     <div class="preview-section"><h3>本地结果</h3><div class="local-state${paper.reproduced ? "" : " pending"}">${paper.local}</div></div>

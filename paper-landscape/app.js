@@ -155,12 +155,22 @@ const papers = [
     metrics: "speedup、τ、SGLang concurrency 2–32 TPS",
     baselines: ["AR", "EAGLE-3", "DFlash", "DART", "FR-Spec"],
     inherited: "DFlash-style backbone",
-    reproduced: false,
-    local: "仓库已收录论文与官方代码，尚无正式本地复现。",
+    reproduced: true,
+    local: "Transformers reviewer 的阶段性正式矩阵完成 10/32 点，均为 temperature 0 的 GSM8K、MATH-500、AIME25、HumanEval、MBPP。4B/8B 五点 speedup 几何平均为 6.6295×/6.6907×；论文对应子集为 6.4094×/6.4470×。LiveCodeBench 数据 URL 失败后顺序 launcher 停止，其余 22 点未完成。",
+    reproduction: {
+      summary: "当前是 10/32 点阶段性结果，不是完整 Table 1。Domino 与各自 AR baseline 同进程可比；论文 H200 与本地 A100 80GB/SDPA 不是严格同硬件。",
+      warning: "缺失两个模型的 LiveCodeBench、MT-Bench、Alpaca，以及全部 temperature 1 点；不得将下表概括为完整主结果复现。",
+      sections: [
+        { title: "Temperature 0 · 五数据集聚合", headers: ["模型", "点数", "本地 speedup", "论文子集", "相对论文", "本地 τ", "论文 τ", "τ 差值"], rows: [
+          ["Qwen3-4B", "5/16", "6.6295×", "6.4094×", "+3.43%", "7.732", "8.150", "−0.418"],
+          ["Qwen3-8B", "5/16", "6.6907×", "6.4470×", "+3.78%", "7.842", "8.260", "−0.418"]
+        ], note: "speedup 使用几何平均，τ 使用算术平均；这里只聚合已完成的五个相同数据集。" }
+      ]
+    },
     pdf: "../../papers/Domino_Decoupling_Causal_Modeling_from_Autoregressive_Drafting_in_Speculative_Decoding_arXiv-2605.29707v1.pdf",
     arxiv: "https://arxiv.org/abs/2605.29707",
     repo: "https://github.com/jianuo-huang/Domino",
-    report: ""
+    report: "https://github.com/mokomoko05/dLLMSpec/tree/main/agentWorkSpace/20260819_012933_domino_qwen3_main_results"
   },
   {
     id: "dspark",
@@ -338,7 +348,7 @@ let selectedPaper = null;
 let methodSummarySource = window.methodSummarySource || "";
 methodSummarySource = methodSummarySource.replace(
   "](index.html)中的链接为准。",
-  "](speculative-decoding-landscape.html)中的链接为准。"
+  "](./)中的链接为准。"
 );
 
 function escapeSummary(value) {
@@ -507,7 +517,8 @@ function renderLinks(paper) {
     `<a href="#method-summary">页面摘要</a>`,
     `<a href="${paper.pdf}">本地 PDF</a>`,
     `<a href="${paper.arxiv}">arXiv</a>`,
-    paper.repo ? `<a href="${paper.repo}">官方 Repo</a>` : ""
+    paper.repo ? `<a href="${paper.repo}">官方 Repo</a>` : "",
+    paper.report ? `<a href="${paper.report}">本地实验记录</a>` : ""
   ].filter(Boolean).join("");
 }
 

@@ -3,21 +3,21 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="DSpark Qwen3-8B 在线 hidden-state 训练实验：从 smoke、5K pilot 到 30K 两轮训练。">
-    <title>DSpark 在线训练实验报告</title>
-    <link rel="stylesheet" href="dspark-online-training.css">
+    <meta name="description" content="DSpark Qwen3-8B hidden-state 训练：online、offline、hybrid 流程，以及从 smoke、5K pilot 到 30K 两轮训练的结果。">
+    <title>DSpark 训练实验报告</title>
+    <link rel="stylesheet" href="styles.css">
   </head>
   <body>
     <nav class="top-nav" aria-label="站点导航">
-      <a href="index.html">← 内容目录</a>
+      <a href="../">← 内容目录</a>
       <span>dLLMSpec 实验报告</span>
     </nav>
 
     <main>
       <article>
         <header class="article-header">
-          <h1>DSpark 在线训练实验：从 Smoke 到 30K</h1>
-          <p class="subtitle">Qwen3-8B online hidden-state 训练、延迟分析与真实 acceptance 评测</p>
+          <h1>DSpark 训练实验：从 Smoke 到 30K</h1>
+          <p class="subtitle">Qwen3-8B hidden-state 训练模式、延迟分析与真实 acceptance 评测</p>
           <dl class="article-meta">
             <div><dt>实验时间</dt><dd>2026-08-16—17</dd></div>
             <div><dt>硬件</dt><dd>4 × NVIDIA A100 80GB</dd></div>
@@ -37,7 +37,7 @@
           <ol>
             <li><a href="#setup">实验设置</a></li>
             <li><a href="#stages">实验过程</a></li>
-            <li><a href="#workflow">在线训练与评测流程</a></li>
+            <li><a href="#workflow">Online / Offline / Hybrid 流程</a></li>
             <li><a href="#latency">延迟与资源</a></li>
             <li><a href="#results">结果</a></li>
             <li><a href="#issues">问题记录</a></li>
@@ -103,8 +103,18 @@
         </section>
 
         <section id="workflow">
-          <h2>3. 在线训练与评测流程</h2>
-          <h3>3.1 训练流程</h3>
+          <h2>3. Online / Offline / Hybrid 训练与评测流程</h2>
+          <p>三种模式训练同一个 DSpark draft model，verifier 始终冻结；区别只在 target hidden states 何时生成、是否保留，以及训练时是否继续依赖 vLLM。</p>
+          <table>
+            <thead><tr><th>模式</th><th>Hidden states</th><th>训练时 vLLM</th><th>典型参数</th><th>适用场景</th></tr></thead>
+            <tbody>
+              <tr><td>Online</td><td>cache miss 时按需生成，加载后删除</td><td>必须常驻</td><td><code>on-missing=generate</code><br><code>on-generate=delete</code></td><td>磁盘紧张、单轮或快速迭代</td></tr>
+              <tr><td>Offline</td><td>训练前由 <code>data_generation_offline.py</code> 全量生成并持久化</td><td>训练阶段可关闭</td><td><code>on-missing=error</code></td><td>多次复用、追求稳定 step time</td></tr>
+              <tr><td>Hybrid</td><td>第一轮按需生成并保留，后续 epoch 直接读 cache</td><td>cache 完整前常驻</td><td><code>on-missing=generate</code><br><code>on-generate=cache</code></td><td>多 epoch，想省去独立预生成阶段</td></tr>
+            </tbody>
+          </table>
+
+          <h3>3.1 本次采用的 Online 流程</h3>
           <ol>
             <li>准备对话数据，完成 tokenize 和 train / validation split。</li>
             <li>在 GPU 0 启动冻结的 Qwen3-8B vLLM hidden-state server。</li>
@@ -114,7 +124,23 @@
             <li>各 DDP rank 完成 optimizer step，按周期执行 validation 并保存 checkpoint。</li>
           </ol>
 
-          <h3>3.2 真实 acceptance 评测</h3>
+          <h3>3.2 Offline 流程</h3>
+          <ol>
+            <li>启动 vLLM hidden-state server，并用 <code>data_generation_offline.py</code> 遍历 prepared dataset。</li>
+            <li>将每条样本指定层的表征写入持久 cache，校验样本数、模型、层号和数据 revision。</li>
+            <li>停止 verifier，把全部可用 GPU 分配给 trainer。</li>
+            <li>训练时只读 cache；缺失立即报错，避免静默混入不同口径的数据。</li>
+          </ol>
+
+          <h3>3.3 Hybrid 流程</h3>
+          <ol>
+            <li>像 Online 一样同时启动 vLLM 与 trainer，但将新生成文件设为保留。</li>
+            <li>第一 epoch 逐步填充 cache；命中的样本直接读取，缺失的样本在线生成。</li>
+            <li>第二 epoch 起大部分请求转为磁盘读取，训练逐渐接近 Offline。</li>
+            <li>确认 cache 完整后，续跑可改成缺失即报错并关闭 vLLM。</li>
+          </ol>
+
+          <h3>3.4 真实 acceptance 评测</h3>
           <ol>
             <li>将训练 checkpoint 转换到隔离的 serving 目录。</li>
             <li>使用 vLLM V2 runner 加载 Qwen3-8B target 和 DSpark draft model。</li>
@@ -132,11 +158,12 @@
               <tr><th>实验</th><th>稳态 step time</th><th>Hidden-state fetch</th><th>Verifier GPU</th><th>Trainer GPU</th></tr>
             </thead>
             <tbody>
-              <tr><td>5K pilot</td><td>4.1–4.5 s</td><td>42%–54%</td><td>约 62.3 GiB</td><td>观测约 42.6 GiB</td></tr>
-              <tr><td>30K × 2</td><td>2.7–3.3 s</td><td>未单独汇总</td><td>约 62.0 GiB</td><td>每卡约 24.0 GiB</td></tr>
+              <tr><td>5K pilot</td><td>均值 4.331 s</td><td>均值 2.147 s</td><td>约 62.3 GiB</td><td>观测约 42.6 GiB</td></tr>
+              <tr><td>30K × 2</td><td>均值 3.383 s</td><td>均值 2.000 s</td><td>约 62.0 GiB</td><td>每卡约 24.0 GiB</td></tr>
             </tbody>
           </table>
-          <p>30K 实验首步因编译耗时约 30 秒，后续进入稳定区间。5K pilot 表明 hidden-state 获取是单步延迟的主要组成部分之一，后续可以评估请求批量化、流水化和有限缓存，但这类优化不会直接解决 validation 与 serving 指标错配。</p>
+          <p>两份原始日志排除首个编译 step 后，有效 tokens/step 几乎相同（3447.4 vs 3444.1），所以 30K 较快不是因为数据规模。总 step time 减少约 0.948 秒，其中 backward 从 1.935 秒降到 1.171 秒，optimizer 从 55.2 ms 降到 30.4 ms，二者贡献约 83% 的缩短；fetch 只减少约 0.148 秒。</p>
+          <p>代码路径和显存共同指向参数 dtype：5K 从零初始化，fresh model 在 DDP setup 中没有显式转 BF16；checkpoint 保存时权重与 optimizer state 被转换为 BF16。30K 通过 <code>--from-pretrained</code> 从该 BF16 checkpoint 继续训练，因此反向和 optimizer 更轻，trainer 显存也从约 42.6 GiB 降到约 24.0 GiB。这个解释有同机日志和代码支持，但尚未做强制 FP32/BF16 的独立 A/B，因此应视为主因判断，而非最终受控 benchmark。</p>
         </section>
 
         <section id="results">
@@ -205,7 +232,7 @@
     </main>
 
     <footer class="page-footer">
-      <a href="index.html">返回内容目录</a>
+      <a href="../">返回内容目录</a>
       <span>结果截点：2026-08-17</span>
     </footer>
   </body>

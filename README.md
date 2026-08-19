@@ -7,8 +7,16 @@
 ## 内容
 
 - Speculative Decoding Trace Dashboards：DFlash、DSpark 与 EAGLE-3 的 step-level trace。
-- 并行 Draft 方法依赖图：论文关系、方法摘要与本地复现结果。
-- DSpark 在线训练：从 smoke、5K pilot 到 30K 两轮训练的实验报告。
+- 并行 Draft 方法依赖图：论文关系、方法摘要与本地复现结果；当前 Domino 阶段性结果为 10/32 点。
+- DSpark 训练：从 smoke、5K pilot 到 30K 两轮训练，并补充 Speculators online / offline / hybrid hidden-state 流程与 step-time 分解。
+
+## 仓库结构
+
+根目录只保留站点入口和目录页样式；每个内容条目独立放在一个文件夹中：
+
+- `paper-landscape/`：论文依赖图、脚本、摘要和图表资产。
+- `dspark-training/`：DSpark 训练实验报告及专用样式。
+- `speculative-trace-dashboard/`：trace 汇总页、manifest 和全部数据集 dashboard。
 
 ## 数据来源
 

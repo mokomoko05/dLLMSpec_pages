@@ -27,3 +27,5 @@
 - [DSpark Qwen3-8B 5K pilot](https://github.com/mokomoko05/dLLMSpec/tree/main/agentWorkSpace/20260816_181530_dspark_speculators_qwen3_8b_5k_pilot)
 - [DSpark Qwen3-8B 30K × 2 epochs](https://github.com/mokomoko05/dLLMSpec/tree/main/agentWorkSpace/20260816_210837_dspark_speculators_qwen3_8b_30k_2ep)
 - [Papers and reproduction workspace](https://github.com/mokomoko05/dLLMSpec)
+
+- `experiment-results/`: Domino 32/32 主结果与 DFlash 多轮去噪最终报告。

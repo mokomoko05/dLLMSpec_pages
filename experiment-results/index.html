@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Domino 与 DFlash 实验结果 · dLLMSpec</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<main>
+  <nav><a href="../">← 返回目录</a></nav>
+  <header>
+    <p class="eyebrow">实验报告 · 2026-08-19</p>
+    <h1>Domino 完整复现与 DFlash 多轮去噪</h1>
+    <p class="lead">两项 A100 实验的最终结果：Domino Qwen3 主矩阵完成 32/32；DFlash 的 zero-shot 多轮 refinement 未获得加速。</p>
+  </header>
+
+  <section>
+    <div class="title-row"><h2>Domino Qwen3-4B/8B</h2><span class="badge success">32/32 完成</span></div>
+    <p>矩阵覆盖 2 个模型、2 个 temperature 和 8 个数据集。每个点的 Domino 与 AR baseline 在同一 reviewer 进程、模型、样本和 SDPA backend 中测量。</p>
+    <div class="metrics">
+      <article><strong>4.8415×</strong><span>本地 32 点 speedup 几何平均</span></article>
+      <article><strong>4.7490×</strong><span>论文对应参考值</span></article>
+      <article><strong>5.890</strong><span>本地 per-step acceptance</span></article>
+    </div>
+    <table>
+      <thead><tr><th>模型</th><th>温度</th><th>点数</th><th>本地 speedup</th><th>论文参考</th><th>Acceptance 差值</th></tr></thead>
+      <tbody>
+        <tr><td>Qwen3-4B</td><td>0</td><td>8</td><td>5.3796×</td><td>5.1937×</td><td>−0.436</td></tr>
+        <tr><td>Qwen3-4B</td><td>1</td><td>8</td><td>4.3836×</td><td>4.4048×</td><td>−0.899</td></tr>
+        <tr><td>Qwen3-8B</td><td>0</td><td>8</td><td>5.4304×</td><td>5.2027×</td><td>−0.411</td></tr>
+        <tr><td>Qwen3-8B</td><td>1</td><td>8</td><td>4.2905×</td><td>4.2735×</td><td>−0.849</td></tr>
+      </tbody>
+    </table>
+    <aside><strong>口径限制：</strong>论文使用 H200，本地使用 A100 80GB PCIe + SDPA，因此论文数值只作趋势对照。整体 speedup 略高约 1.95%，但 acceptance 低 0.649 token/step，不能解释为 draft quality 更高。</aside>
+    <p>初次 LiveCodeBench 下载失败的两个目录保留为 <code>FAILED</code>；本地 snapshot fallback 修复后的成功运行才进入正式汇总。</p>
+  </section>
+
+  <section>
+    <div class="title-row"><h2>DFlash 多轮去噪</h2><span class="badge negative">No-Go</span></div>
+    <p>在现有 Qwen3-8B DFlash block-16 checkpoint 上，测试无需重训的 prefix reveal 与 confidence top-8 两轮 refinement。所有输出仍经过 target verification，保持 lossless。</p>
+    <table>
+      <thead><tr><th>配置</th><th>Tau</th><th>Decode ms/token</th><th>相对 baseline</th></tr></thead>
+      <tbody>
+        <tr><td>single/1 baseline</td><td>5.874</td><td>8.057</td><td>—</td></tr>
+        <tr><td>prefix reveal/2</td><td>5.430</td><td>9.847</td><td>+20.4% latency</td></tr>
+        <tr><td>confidence top-8/2</td><td>5.159</td><td>10.250</td><td>+27.2% latency</td></tr>
+      </tbody>
+    </table>
+    <aside><strong>结论：</strong>多轮推理本身可正确运行，但 partial-token refinement 对只用全 MASK block 训练的 checkpoint 属于 OOD。三种 refinement 均未提高端到端性能，不继续扩展跨任务矩阵；若继续研究，应优先训练 partial-mask/timestep-aware drafter。</aside>
+  </section>
+
+  <footer>
+    <p>详细脚本、manifest、精简原始结果与中文报告保存在 <a href="https://github.com/mokomoko05/dLLMSpec/tree/main/agentWorkSpace">dLLMSpec/agentWorkSpace</a>。</p>
+  </footer>
+</main>
+</body>
+</html>

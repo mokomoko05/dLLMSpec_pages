@@ -17,13 +17,13 @@ h1 { margin-bottom: 5pt; font-size: 16pt; line-height: 1.1; }
 .catalog-meta { margin: 0; color: var(--muted); font-size: 9pt; }
 .contents { padding-top: 12pt; }
 .contents > h2 { margin-bottom: 5pt; font-size: 11pt; }
-.article-list { margin: 0; padding-left: 2rem; }
-.article-list > li { padding: 7pt 0 6pt 4pt; border-bottom: 0.5pt solid var(--line); }
+.article-list { margin: 0; padding-left: 0; list-style: none; }
+.article-list > li { padding: 7pt 0 6pt 0; border-bottom: 0.5pt solid var(--line); }
 .article-list h3 { margin-bottom: 3pt; font-size: 10.5pt; }
 .article-list h3 a { text-decoration: none; }
 .article-list h3 a:hover { text-decoration: underline; }
 .article-list p { margin-bottom: 2pt; color: #444; font-size: 9.5pt; }
-.article-list .entry-meta { margin: 0; color: var(--muted); font-size: 8.5pt; }
+.article-list .entry-date { margin: 0; color: var(--muted); font-size: 8.5pt; }
 footer { margin-top: 18pt; padding-top: 8pt; border-top: 0.5pt solid var(--line); color: var(--muted); font-size: 8.5pt; }
 
 /* Trace collection page */

@@ -156,15 +156,17 @@ const papers = [
     baselines: ["AR", "EAGLE-3", "DFlash", "DART", "FR-Spec"],
     inherited: "DFlash-style backbone",
     reproduced: true,
-    local: "Transformers reviewer 的阶段性正式矩阵完成 10/32 点，均为 temperature 0 的 GSM8K、MATH-500、AIME25、HumanEval、MBPP。4B/8B 五点 speedup 几何平均为 6.6295×/6.6907×；论文对应子集为 6.4094×/6.4470×。LiveCodeBench 数据 URL 失败后顺序 launcher 停止，其余 22 点未完成。",
+    local: "正式矩阵 32/32 点完成。全部点 speedup 几何平均 4.8415×（论文参考 4.7490×）；本地 per-step acceptance 5.890（论文 6.538）。",
     reproduction: {
-      summary: "当前是 10/32 点阶段性结果，不是完整 Table 1。Domino 与各自 AR baseline 同进程可比；论文 H200 与本地 A100 80GB/SDPA 不是严格同硬件。",
-      warning: "缺失两个模型的 LiveCodeBench、MT-Bench、Alpaca，以及全部 temperature 1 点；不得将下表概括为完整主结果复现。",
+      summary: "完整 32/32 点已通过解析并写入 SUCCESS。Domino 与 AR baseline 在同一 reviewer 进程、模型、样本、参数和 SDPA backend 中测量；论文 H200 与本地 A100 80GB 不是严格同硬件。",
+      warning: "两次初始 LiveCodeBench 下载失败目录保留 FAILED；修复后的本地 snapshot 运行才进入汇总。论文对照仅表示趋势，不是同硬件复现。",
       sections: [
-        { title: "Temperature 0 · 五数据集聚合", headers: ["模型", "点数", "本地 speedup", "论文子集", "相对论文", "本地 τ", "论文 τ", "τ 差值"], rows: [
-          ["Qwen3-4B", "5/16", "6.6295×", "6.4094×", "+3.43%", "7.732", "8.150", "−0.418"],
-          ["Qwen3-8B", "5/16", "6.6907×", "6.4470×", "+3.78%", "7.842", "8.260", "−0.418"]
-        ], note: "speedup 使用几何平均，τ 使用算术平均；这里只聚合已完成的五个相同数据集。" }
+        { title: "完整矩阵 · 按模型与温度聚合", headers: ["模型", "温度", "点数", "本地 speedup", "论文参考", "相对论文", "本地 τ", "论文 τ"], rows: [
+          ["Qwen3-4B", "0", "8/8", "5.3796×", "5.1937×", "+3.58%", "6.640", "7.076"],
+          ["Qwen3-4B", "1", "8/8", "4.3836×", "4.4048×", "−0.48%", "5.099", "5.998"],
+          ["Qwen3-8B", "0", "8/8", "5.4304×", "5.2027×", "+4.38%", "6.763", "7.174"],
+          ["Qwen3-8B", "1", "8/8", "4.2905×", "4.2735×", "+0.40%", "5.058", "5.906"]
+        ], note: "32 点整体 speedup 几何平均 4.8415×，论文参考 4.7490×；整体本地 acceptance 5.890，论文 6.538。" }
       ]
     },
     pdf: "../../papers/Domino_Decoupling_Causal_Modeling_from_Autoregressive_Drafting_in_Speculative_Decoding_arXiv-2605.29707v1.pdf",

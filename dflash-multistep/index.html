@@ -1,58 +1,40 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>DFlash 多轮去噪实验报告</title>
-  <link rel="stylesheet" href="styles.css">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="DFlash Qwen3-8B block-16 multi-step denoising experiment: configuration definitions, cache implementation, correctness checks and results.">
+<title>DFlash 多轮去噪实验报告</title><link rel="stylesheet" href="styles.css">
 </head>
 <body>
-<main>
-  <nav><a href="../">← 返回目录</a></nav>
-  <header>
-    <p class="eyebrow">实验报告 · 2026-08-19</p>
-    <h1>Domino 完整复现与 DFlash 多轮去噪</h1>
-    <p class="lead">两项 A100 实验的最终结果：Domino Qwen3 主矩阵完成 32/32；DFlash 的 zero-shot 多轮 refinement 未获得加速。</p>
-  </header>
+<nav class="top-nav" aria-label="站点导航"><a href="../">← 内容目录</a><span>dLLMSpec 实验报告</span></nav>
+<main><article>
+<header class="article-header"><h1>DFlash 多轮去噪实验</h1><p class="subtitle">Qwen3-8B block-16：三种配置、代码实现、Cache 语义与端到端结果</p><dl class="article-meta"><div><dt>实验时间</dt><dd>2026-08-18—19</dd></div><div><dt>硬件</dt><dd>单张 NVIDIA A100 80GB</dd></div><div><dt>Target / Draft</dt><dd>Qwen3-8B / DFlash block-16</dd></div><div><dt>状态</dt><dd>已完成 · No-Go</dd></div></dl></header>
+<section class="abstract"><h2>摘要</h2><p>本实验研究 DFlash draft block 在一次 target verification 前执行多次 denoising/refinement，是否能够提高接受长度并降低端到端 decode latency。实验不重新训练 drafter，所有候选 proposal 最终仍由 target 并行验证，因此输出保持 lossless。</p><p>当前 checkpoint 只按 clean anchor 加全 MASK block 训练。结果表明，zero-shot partial-token refinement 没有带来收益：prefix reveal 和 confidence top-8 都增加 draft 计算，且 GSM8K 上的 tau 下降。后续若继续，应先训练覆盖 partial-mask/timestep 状态的 drafter。</p></section>
+<nav class="toc"><h2>目录</h2><ol><li><a href="#setup">实验设置</a></li><li><a href="#configs">三个配置的含义</a></li><li><a href="#implementation">代码实现</a></li><li><a href="#correctness">正确性与 Cache</a></li><li><a href="#results">关键结果</a></li><li><a href="#conclusion">结论</a></li></ol></nav>
+<section id="setup"><h2>1. 实验设置</h2><p>每个 speculative round 先由 DFlash 生成最多 15 个 draft token，再由 target 一次性验证。multi-step 只增加 draft denoising 次数，不改变 target verification、接受规则或最终输出。</p><table><tbody><tr><th>Target</th><td><code>/cephfs/shared/model/Qwen3-8B</code></td></tr><tr><th>Draft</th><td><code>/cephfs/shared/model/drafters/Qwen3-8B-DFlash-b16</code>，block size 16（1 anchor + 15 draft positions）</td></tr><tr><th>GPU / precision</th><td>NVIDIA A100 80GB，BF16</td></tr><tr><th>Runtime</th><td>PyTorch 2.6.0+cu124、Transformers 4.57.1、SDPA</td></tr><tr><th>Phase 0</th><td>GSM8K 第 1 条，最多 32 new tokens，3 个 trial</td></tr><tr><th>Phase 1</th><td>GSM8K 32 条，256 max new tokens，3 个 paired trial，共 96 samples/config</td></tr><tr><th>主要指标</th><td>tau、accepted draft tokens、decode ms/token、draft ms/verification</td></tr></tbody></table></section>
+<section id="configs"><h2>2. 三个配置的含义</h2><p>以下三项是最终正式对照中的三个配置。它们共享同一 target、draft checkpoint、prompt 顺序和 verification 逻辑，区别只在 draft block 在 denoising round 内如何构造。</p><table><caption>表 1. 三个配置</caption><thead><tr><th>配置</th><th>denoise 次数</th><th>输入构造</th><th>用途</th></tr></thead><tbody><tr><td><code>single/1</code></td><td>1</td><td><code>[anchor, MASK × 15]</code>，一次 forward 后直接得到完整 proposal</td><td>官方 DFlash baseline</td></tr><tr><td><code>prefix_reveal/2</code></td><td>2</td><td>第一轮预测后固定前缀位置，其余位置重新设为 MASK；第二轮只补后缀</td><td>测试“保护早期高价值 token、重算后缀”</td></tr><tr><td><code>confidence_reveal/2/top8</code></td><td>2</td><td>第一轮按每个位置的 max softmax probability 选 top-8 非连续位置锁定，其余 7 个位置 remask</td><td>测试“锁定高置信 token、让其余位置利用条件信息重算”</td></tr></tbody></table><h3>2.1 single/1：基线</h3><p>这是原始 DFlash 行为。anchor 是当前已确认上下文的最后 token；15 个 draft positions 全部填 MASK。draft forward 同时读取 anchor 和 target hidden features，输出 15 个位置的 logits，按 greedy 语义得到 proposal，随后 target 验证。这一配置只有一次 draft forward，成本最低。</p><h3>2.2 prefix_reveal/2：固定前缀</h3><p>第一轮仍输入全 MASK block。得到第一轮 token 后，固定 proposal 的前缀位置，例如 block 内较早的若干 token；剩余后缀位置重置为 MASK，进行第二次 draft forward。第二轮看到固定前缀后重新预测后缀，意图是让前缀信息向后传播，同时避免重算前缀。</p><p>它是位置连续的 schedule：固定的是从 block 起点开始的 prefix，而不是根据置信度选择的离散位置。由于需要第二次 draft forward，只有当 acceptance 增益足以覆盖额外 draft latency 时才可能加速。</p><h3>2.3 confidence_reveal/2/top8：锁定高置信位置</h3><p>第一轮得到 15 个 draft positions 的 logits，计算每个位置的 <code>softmax(logits).max()</code>，在 15 个位置中选出 confidence 最高的 8 个。保留这 8 个位置的 token，把其余 7 个位置设为 MASK；第二轮只重预测这 7 个位置。top-8 不要求位置连续，因此可能同时锁定前缀和后缀位置。</p><p>这个策略的假设是：高置信 token 已经足够可靠，锁定它们能给剩余 MASK 位置提供更好的条件；但当前 checkpoint 没有训练过“部分 token 已知、部分 token MASK”的输入分布，所以它属于 zero-shot OOD refinement。</p></section>
+<section id="implementation"><h2>3. 代码实现</h2><p>实现位于 DFlash 子模块的实验分支 <code>exp/multistep-denoising</code>，confidence 版本 commit 为 <code>c982c1b</code>。根实验记录位于 <code>agentWorkSpace/20260818_dflash_multistep_denoising/</code>，根仓库 main 只同步实验记录，不默认合并实验代码。</p><h3>3.1 公共生成循环</h3><ol><li>在当前 <code>start</code> 位置保存 anchor，并构造 block token：第一轮是 anchor + 全 MASK。</li><li>调用 draft model 的单步 denoise helper 得到 logits、token proposal 和诊断信息。</li><li>如果配置是 <code>single/1</code>，立即结束 denoising；如果是两轮配置，按策略生成下一轮的 partial block。</li><li>每次 draft forward 结束后把 draft KV cache crop 回 <code>start</code>，避免未验证 token 的 KV 泄漏到下一 speculative round。</li><li>完成最终 proposal 后只执行一次 target verification，提交 accepted prefix 加 bonus token。</li></ol><h3>3.2 策略分支的伪代码</h3><pre><code>block = [anchor] + [MASK] * draft_len
+logits = draft_step(block, target_hidden, first_step=True)
+proposal = argmax(logits)
 
-  <section>
-    <div class="title-row"><h2>Domino Qwen3-4B/8B</h2><span class="badge success">32/32 完成</span></div>
-    <p>矩阵覆盖 2 个模型、2 个 temperature 和 8 个数据集。每个点的 Domino 与 AR baseline 在同一 reviewer 进程、模型、样本和 SDPA backend 中测量。</p>
-    <div class="metrics">
-      <article><strong>4.8415×</strong><span>本地 32 点 speedup 几何平均</span></article>
-      <article><strong>4.7490×</strong><span>论文对应参考值</span></article>
-      <article><strong>5.890</strong><span>本地 per-step acceptance</span></article>
-    </div>
-    <table>
-      <thead><tr><th>模型</th><th>温度</th><th>点数</th><th>本地 speedup</th><th>论文参考</th><th>Acceptance 差值</th></tr></thead>
-      <tbody>
-        <tr><td>Qwen3-4B</td><td>0</td><td>8</td><td>5.3796×</td><td>5.1937×</td><td>−0.436</td></tr>
-        <tr><td>Qwen3-4B</td><td>1</td><td>8</td><td>4.3836×</td><td>4.4048×</td><td>−0.899</td></tr>
-        <tr><td>Qwen3-8B</td><td>0</td><td>8</td><td>5.4304×</td><td>5.2027×</td><td>−0.411</td></tr>
-        <tr><td>Qwen3-8B</td><td>1</td><td>8</td><td>4.2905×</td><td>4.2735×</td><td>−0.849</td></tr>
-      </tbody>
-    </table>
-    <aside><strong>口径限制：</strong>论文使用 H200，本地使用 A100 80GB PCIe + SDPA，因此论文数值只作趋势对照。整体 speedup 略高约 1.95%，但 acceptance 低 0.649 token/step，不能解释为 draft quality 更高。</aside>
-    <p>初次 LiveCodeBench 下载失败的两个目录保留为 <code>FAILED</code>；本地 snapshot fallback 修复后的成功运行才进入正式汇总。</p>
-  </section>
+if strategy == "single":
+    final = proposal
+elif strategy == "prefix_reveal":
+    k = schedule(step=1, draft_len=draft_len, steps=2)
+    block = [anchor] + proposal[:k] + [MASK] * (draft_len-k)
+    logits = draft_step(block, target_hidden=None, first_step=False)
+    final = fill_mask_positions(block, argmax(logits))
+elif strategy == "confidence_reveal":
+    confidence = softmax(logits).max(dim=-1).values
+    locked = topk(confidence, k=8).indices
+    block = remask_except(proposal, locked)
+    logits = draft_step(block, target_hidden=None, first_step=False)
+    final = fill_mask_positions(block, argmax(logits))
 
-  <section>
-    <div class="title-row"><h2>DFlash 多轮去噪</h2><span class="badge negative">No-Go</span></div>
-    <p>在现有 Qwen3-8B DFlash block-16 checkpoint 上，测试无需重训的 prefix reveal 与 confidence top-8 两轮 refinement。所有输出仍经过 target verification，保持 lossless。</p>
-    <table>
-      <thead><tr><th>配置</th><th>Tau</th><th>Decode ms/token</th><th>相对 baseline</th></tr></thead>
-      <tbody>
-        <tr><td>single/1 baseline</td><td>5.874</td><td>8.057</td><td>—</td></tr>
-        <tr><td>prefix reveal/2</td><td>5.430</td><td>9.847</td><td>+20.4% latency</td></tr>
-        <tr><td>confidence top-8/2</td><td>5.159</td><td>10.250</td><td>+27.2% latency</td></tr>
-      </tbody>
-    </table>
-    <aside><strong>结论：</strong>多轮推理本身可正确运行，但 partial-token refinement 对只用全 MASK block 训练的 checkpoint 属于 OOD。三种 refinement 均未提高端到端性能，不继续扩展跨任务矩阵；若继续研究，应优先训练 partial-mask/timestep-aware drafter。</aside>
-  </section>
-
-  <footer>
-    <p>详细脚本、manifest、精简原始结果与中文报告保存在 <a href="https://github.com/mokomoko05/dLLMSpec/tree/main/agentWorkSpace">dLLMSpec/agentWorkSpace</a>。</p>
-  </footer>
-</main>
-</body>
-</html>
+target_verify(final)</code></pre><h3>3.3 代码入口</h3><ul><li><code>scripts/run_multistep_experiment.py</code>：统一 runner，支持 strategy、steps、trial、profile 和诊断输出。</li><li><code>scripts/validate_denoise_strategy.py</code>：检查 steps=1 基线、repeat-mask logits/cache、anchor 和边界。</li><li><code>scripts/run_confidence_phase0.sh</code>：confidence 单样本机制检查。</li><li><code>scripts/run_confidence_phase1_gsm8k.sh</code>：GSM8K paired formal sweep。</li><li><code>scripts/profile_multistep.py</code>：CUDA event 与 torch.profiler。</li></ul><p class="note">后续 denoise 不再次注入同一份 target hidden context：第一轮写入后只保留已确认历史的 cache，第二轮从当前 <code>start</code> cache 出发。这是 multi-step 实现中最重要的 cache 约束。</p></section>
+<section id="correctness"><h2>4. 正确性与 Cache</h2><table><caption>表 2. 验收结果</caption><thead><tr><th>检查</th><th>结果</th></tr></thead><tbody><tr><td>repeat-mask 相邻轮 logits / argmax</td><td>逐项一致，证明后续 forward 没有重复写入 target hidden context</td></tr><tr><td>cache 长度</td><td>每次 refinement 后回到 <code>start</code></td></tr><tr><td>anchor / 边界</td><td>anchor 不变，proposal 长度、stop token 和 max-length 边界正确</td></tr><tr><td>输出一致性</td><td>候选最终输出与 baseline 一致，target verification 保持 lossless</td></tr></tbody></table><p>因此候选的负结果不是由 cache 位置偏移造成，而是由 partial-token OOD 与额外 draft 计算共同造成。</p></section>
+<section id="results"><h2>5. 关键数据结论</h2><table><caption>表 3. Phase 1 GSM8K 正式结果</caption><thead><tr><th>配置</th><th>样本</th><th>tau</th><th>accepted draft</th><th>decode ms/token</th><th>draft ms/verification</th><th>相对 baseline</th></tr></thead><tbody><tr><td><code>single/1</code></td><td>96</td><td>5.874</td><td>4.874</td><td>8.057</td><td>6.490</td><td>—</td></tr><tr><td><code>prefix_reveal/2</code></td><td>96</td><td>5.430</td><td>4.430</td><td>9.847</td><td>12.205</td><td>+1.671 ms/token</td></tr><tr><td><code>confidence/2/top8</code></td><td>96</td><td>5.159</td><td>4.159</td><td>10.250</td><td>12.072</td><td>+2.192 ms/token</td></tr></tbody></table><p>prefix reveal 的 decode latency 增加约 20.4%，tau 下降约 7.6%；confidence top-8 的 latency 增加约 27.2%，tau 下降约 12.2%。Phase 0 中 confidence tau 曾从 3.667 升至 3.778，但 latency 同时从 12.983 升至 14.741 ms/token，单样本上升不足以改变结论。</p></section>
+<section id="conclusion"><h2>6. 结论与后续</h2><ol><li>DFlash multi-step 的三种正式配置分别代表一次基线、连续前缀 reveal 和离散 confidence reveal。</li><li>代码已正确处理 target hidden context、draft KV cache crop、anchor 固定和单次 target verification。</li><li>当前 checkpoint 上两种 multi-step 候选都降低 acceptance 并增加 decode latency，按 Go/No-Go 规则判定 No-Go。</li><li>这不是对多步 diffusion 的普遍否定；下一步应训练 partial-mask / timestep-aware drafter，再复用同一 runner。</li></ol></section>
+<section class="references"><h2>原始记录</h2><ol><li><a href="https://github.com/mokomoko05/dLLMSpec/tree/main/agentWorkSpace/20260818_dflash_multistep_denoising">DFlash 多轮去噪实验目录</a></li><li><a href="https://github.com/mokomoko05/dLLMSpec/blob/main/agentWorkSpace/20260818_dflash_multistep_denoising/RESULTS.md">完整结果与指标</a></li><li><a href="https://github.com/mokomoko05/dLLMSpec/tree/main/implementations/dflash">DFlash 子模块代码</a></li></ol></section>
+</article></main><footer class="page-footer"><span>DFlash 多轮去噪 · 2026-08-18—19</span><a href="../">返回内容目录</a></footer>
+</body></html>

@@ -4,30 +4,6 @@
 
 <p><a href="https://mokomoko05.github.io/dLLMSpec_pages/"><strong>打开 Pages 页面 →</strong></a></p>
 
-## 内容
-
-- Speculative Decoding Trace Dashboards：DFlash、DSpark 与 EAGLE-3 的 step-level trace。
-- 并行 Draft 方法依赖图：论文关系、方法摘要与本地复现结果；当前 Domino 阶段性结果为 10/32 点。
-- DSpark 训练实验：从 smoke、5K pilot 到 30K 两轮训练，并补充 Speculators online / offline / hybrid hidden-state 流程与 step-time 分解。
-
-## 仓库结构
-
-根目录只保留站点入口和目录页样式；每个内容条目独立放在一个文件夹中：
-
-- `paper-landscape/`：论文依赖图、脚本、摘要和图表资产。
-- `dspark-training/`：DSpark 训练实验报告。
-- `dflash-multistep/`：DFlash 多轮去噪实验报告，也是后续实验报告的版式基准。
-- `speculative-trace-dashboard/`：trace 汇总页、manifest 和全部数据集 dashboard。
-
-## 实验报告页面规范
-
-后续新增或改造实验报告页面时，以 [`dflash-multistep/`](https://mokomoko05.github.io/dLLMSpec_pages/dflash-multistep/) 为唯一版式基准：
-
-- 字体、字号、正文宽度、间距、表格、代码块、响应式和打印样式均沿用该页面；不要为同类报告另起视觉体系。
-- HTML 结构沿用顶部导航、报告标题与元信息、摘要、页内目录、编号正文、原始记录和页脚。目录链接必须与正文 section 的 `id` 一致。
-- 每份报告使用独立目录，并在根目录 `index.html` 的“内容目录”中添加标题、摘要和日期；展示标题同时同步到页面 `<title>` 与 `<h1>`。
-- 如需扩展样式，优先在基准样式上做最小增量，并保持既有桌面、移动端和打印行为。
-
 ## 数据来源
 
 原始数据和实验记录保存在 private repo（需要仓库权限）：
@@ -37,5 +13,3 @@
 - [DSpark Qwen3-8B 5K pilot](https://github.com/mokomoko05/dLLMSpec/tree/main/agentWorkSpace/20260816_181530_dspark_speculators_qwen3_8b_5k_pilot)
 - [DSpark Qwen3-8B 30K × 2 epochs](https://github.com/mokomoko05/dLLMSpec/tree/main/agentWorkSpace/20260816_210837_dspark_speculators_qwen3_8b_30k_2ep)
 - [Papers and reproduction workspace](https://github.com/mokomoko05/dLLMSpec)
-
-- `experiment-results/`: Domino 32/32 主结果与 DFlash 多轮去噪最终报告。

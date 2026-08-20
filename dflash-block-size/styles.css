@@ -1,0 +1,16 @@
+@import url("../dflash-multistep/styles.css");
+
+.best {
+  font-weight: 700;
+  background: #eef6ee;
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+.metric-summary td:not(:first-child),
+.metric-summary th:not(:first-child) {
+  text-align: right;
+  white-space: nowrap;
+}

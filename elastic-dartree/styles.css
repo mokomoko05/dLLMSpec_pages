@@ -45,6 +45,87 @@ li { margin-bottom: 4px; }
 code { padding: 1pt 2pt; background: var(--shade); font-size: 9pt; }
 .note { padding: 6pt 8pt; border-left: 1.5pt solid #888; background: var(--shade); font-size: 9.5pt; }
 
+.flow-figure { margin: 9pt 0 13pt; }
+.flow-figure figcaption { margin-top: 5pt; color: var(--muted); font-size: 8.5pt; text-align: center; }
+.flow-stack { display: grid; justify-items: center; gap: 18px; padding: 4pt 0; }
+.flow-node {
+  position: relative;
+  width: min(100%, 5.55in);
+  padding: 7pt 11pt;
+  border: 0.6pt solid #9ca9b2;
+  border-radius: 5pt;
+  background: #fbfcfd;
+  color: var(--ink);
+  text-align: center;
+}
+.flow-node strong { display: block; margin-bottom: 1.5pt; font-size: 9.5pt; }
+.flow-node span { display: block; color: #555; font-size: 8.7pt; }
+.flow-node.accent { border-color: #47799a; background: #f2f7fa; }
+.flow-node.result { border-color: #5f8469; background: #f3f8f4; }
+.flow-node:not(:last-child)::after {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  width: 1px;
+  height: 18px;
+  background: #75838d;
+  content: "";
+}
+.flow-node:not(:last-child)::before {
+  position: absolute;
+  z-index: 1;
+  top: calc(100% + 13px);
+  left: calc(50% - 4px);
+  border-top: 6px solid #75838d;
+  border-right: 4px solid transparent;
+  border-left: 4px solid transparent;
+  content: "";
+}
+.flow-options { position: relative; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10pt; width: min(100%, 6.5in); }
+.flow-options::after { position: absolute; top: 100%; left: 50%; width: 1px; height: 18px; background: #75838d; content: ""; }
+.flow-options::before { position: absolute; z-index: 1; top: calc(100% + 13px); left: calc(50% - 4px); border-top: 6px solid #75838d; border-right: 4px solid transparent; border-left: 4px solid transparent; content: ""; }
+.flow-option { padding: 7pt 9pt; border: 0.6pt solid #aeb8bf; border-radius: 4pt; background: #fff; text-align: center; }
+.flow-option strong { display: block; margin-bottom: 2pt; color: var(--ink); font-size: 9pt; }
+.flow-option span { color: var(--muted); font-size: 8.5pt; }
+.equation-panel { margin: 8pt 0 12pt; padding: 8pt 11pt; border: 0.6pt solid var(--line); border-radius: 4pt; background: #fafafa; }
+.equation-panel p { margin-bottom: 4pt; text-align: left; }
+.equation-panel p:last-child { margin-bottom: 0; }
+.math-block { margin: 7pt 0 10pt; padding: 7pt 10pt; overflow-x: auto; border: 0.5pt solid var(--line); border-radius: 4pt; background: #fbfbfb; color: var(--ink); font-size: 9.5pt; text-align: center; white-space: nowrap; }
+.math-block .math-line { display: block; margin: 2.5pt 0; }
+.math-block .math-note { color: var(--muted); font-size: 8.3pt; }
+.dimension-table td:first-child { width: 70pt; }
+.operation-tag { display: inline-block; min-width: 52pt; margin-right: 4pt; padding: 1pt 3pt; border-radius: 3pt; background: #edf1f3; color: #44535c; font-size: 8pt; text-align: center; }
+.token-tree-wrap, .architecture-wrap { overflow-x: auto; padding-bottom: 2pt; }
+.token-tree, .architecture-diagram { display: block; width: 100%; height: auto; margin: 0 auto; }
+.architecture-diagram { min-width: 660px; }
+.token-tree { min-width: 520px; }
+.architecture-diagram .lane { fill: #f5f7f8; stroke: #c7d0d5; stroke-width: 1; }
+.architecture-diagram .lane-label { fill: #52616a; font-size: 15px; font-weight: 700; letter-spacing: 0.4px; }
+.architecture-diagram .stage { fill: #fff; stroke: #82929c; stroke-width: 1.2; }
+.architecture-diagram .stage-accent { fill: #edf5f9; stroke: #47799a; stroke-width: 1.4; }
+.architecture-diagram .stage-result { fill: #f0f7f1; stroke: #5f8469; stroke-width: 1.4; }
+.architecture-diagram .stage-title { fill: #222; font-size: 14px; font-weight: 700; }
+.architecture-diagram .stage-copy { fill: #4f5b62; font-size: 12.5px; }
+.architecture-diagram .connector { fill: none; stroke: #647680; stroke-width: 1.7; }
+.architecture-diagram .split-dot { fill: #47799a; }
+.token-tree .edge { stroke: #89969e; stroke-width: 1.5; }
+.token-tree .edge.accepted { stroke: #4f8060; stroke-width: 2.4; }
+.token-tree .node { fill: #fff; stroke: #7f8d96; stroke-width: 1.2; }
+.token-tree .node.accepted { fill: #edf6ef; stroke: #4f8060; stroke-width: 1.8; }
+.token-tree .node.rejected { fill: #faf1f1; stroke: #9b6565; }
+.token-tree text { fill: #222; font-size: 14px; text-anchor: middle; dominant-baseline: central; }
+.token-tree .annotation { fill: #555; font-size: 12px; text-anchor: start; }
+.trace-list { display: grid; gap: 6pt; margin: 8pt 0 12pt; padding: 0; list-style: none; }
+.trace-list li { display: grid; grid-template-columns: 64pt 1fr; gap: 8pt; align-items: start; margin: 0; padding: 6pt 8pt; border: 0.5pt solid var(--line); border-radius: 4pt; }
+.trace-badge { display: inline-block; padding: 2pt 4pt; border-radius: 3pt; background: #eef2f4; color: #42515a; font-size: 8pt; text-align: center; }
+.trace-list li.pass .trace-badge { background: #eaf4ec; color: #356044; }
+.trace-list li.stop .trace-badge { background: #f8eaea; color: #7b4444; }
+.hypothesis-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7pt; margin: 8pt 0 12pt; }
+.hypothesis-card { padding: 7pt 8pt; border: 0.5pt solid var(--line); border-radius: 4pt; background: #fafafa; }
+.hypothesis-card strong { display: block; margin-bottom: 3pt; color: var(--ink); font-size: 9pt; }
+.hypothesis-card span { display: block; color: #555; font-size: 8.5pt; }
+.hypothesis-card.hit { border-color: #6f9879; background: #f2f8f3; }
+
 table { width: 100%; margin: 8pt 0 11pt; border-collapse: collapse; border-top: 0.75pt solid var(--ink); border-bottom: 0.75pt solid var(--ink); font-size: 8.5pt; font-variant-numeric: tabular-nums; }
 caption { padding-bottom: 4pt; color: var(--muted); font-size: 8.5pt; text-align: left; }
 th, td { padding: 4.5pt 6pt; border-bottom: 0.5pt solid var(--line); text-align: left; vertical-align: top; }
@@ -66,6 +147,9 @@ tbody th { width: 180px; font-weight: 600; }
   .article-meta { display: grid; grid-template-columns: 1fr; gap: 3px; }
   .toc ol { columns: 1; }
   section { padding: 24px 0; }
+  .flow-options, .hypothesis-grid { grid-template-columns: 1fr; }
+  .flow-node { padding: 10px 12px; }
+  .trace-list li { grid-template-columns: 1fr; gap: 5px; }
   .page-footer { flex-wrap: wrap; padding: 18px 0; }
   table { display: block; overflow-x: auto; white-space: nowrap; }
 }

@@ -42,49 +42,116 @@
 
 <section id="baseline">
 <h2>1. DARTree 基线流程</h2>
-<p>DFlash/DOMINO drafter 不是独立的小语言模型。它读取目标模型已经确认的上下文，并抽取目标模型第 <code>1/9/17/25/33</code> 层的隐藏表示；随后一次并行生成 16 个位置的基础分布。Domino 的 GRU 根据每条具体前缀修正这些并行分布，DARTree 再把多条分支组织成一棵树。</p>
-<pre><code>已确认前缀 P，最后词元为 r
-        │
-        ├─ target 已有 KV cache 与五路 hidden feature
-        │
-        ▼
-DFlash 一次 forward：产生 16 个并行位置 z[0:16]
-        │
-        ▼
-Domino GRU：为不同前缀维护不同状态
-        │
-        ▼
-DARTree 构树（例：construction width W48）
-        │
-        ▼
-剪枝到 verification budget B256
-        │
-        ▼
-target 一次 forward 并行验证根 + 256 个候选
-        │
-        ▼
-只提交连续匹配路径，再提交 target 给出的 bonus token</code></pre>
+<p>DFlash/DOMINO drafter 不是独立的小语言模型。它读取目标模型已经确认的上下文，并抽取目标模型从 0 开始编号的 <code>[1,9,17,25,33]</code> 层隐藏表示，也就是第 2/10/18/26/34 个 Transformer block 的输出；随后一次并行生成 16 个位置的基础分布。Domino 的 GRU 根据每条具体前缀修正这些并行分布，DARTree 再把多条分支组织成一棵树。</p>
+<figure class="flow-figure" aria-label="DARTree 基线算法流程">
+<div class="flow-stack">
+<div class="flow-node"><strong>已确认前缀 P，当前词元 r</strong><span>target KV cache 与五路 hidden feature 已就绪</span></div>
+<div class="flow-node"><strong>DFlash 并行预测</strong><span>一次 forward 产生 16 个位置的基础表示 z[0:16]</span></div>
+<div class="flow-node"><strong>Domino 因果修正</strong><span>GRU 为每条具体前缀维护独立状态</span></div>
+<div class="flow-node"><strong>DARTree 构造 supertree</strong><span>示例 construction width：W48</span></div>
+<div class="flow-node"><strong>按验证预算剪枝</strong><span>示例 verification budget：B256</span></div>
+<div class="flow-node accent"><strong>Target 批量验证</strong><span>一次 forward 同时处理根节点与 256 个候选</span></div>
+<div class="flow-node result"><strong>提交生成结果</strong><span>连续匹配的 draft 路径 + target 给出的 bonus token</span></div>
+</div>
+</figure>
 
-<h3>1.1 一个具体词元例子</h3>
-<pre><code>草稿树：
-            r
-          /   \
-         A     X
-         │     │
-         B     Y
-        / \
-       C   E
+<h3>1.1 从 Target feature 到 DFlash 并行表示</h3>
+<p>下面的维度来自本实验实际使用的 Qwen3-4B / Domino-b16 checkpoint。令请求 batch size 为 <code>N</code>、已确认前缀长度为 <code>L</code>、并行草稿块长为 <code>S=16</code>。</p>
+<table class="dimension-table"><thead><tr><th>符号</th><th>实际维度</th><th>数据</th></tr></thead><tbody>
+<tr><td><code>H</code></td><td>2,560</td><td>Target、DFlash 和 token embedding 的 hidden size</td></tr>
+<tr><td><code>G</code></td><td>1,024</td><td>Domino prefix GRU 的路径状态维度</td></tr>
+<tr><td><code>M</code></td><td>256</td><td>Domino logit 修正 MLP 的中间维度</td></tr>
+<tr><td><code>V</code></td><td>151,936</td><td>Qwen3 词表大小</td></tr>
+</tbody></table>
+<p>Target 在上述五个 block 分别产生一个 <code>[N,L,2560]</code> hidden tensor。代码先沿最后一维拼接五路 feature，得到 <code>C∈R<sup>N×L×12800</sup></code>，再用一个无 bias 线性层压回 2,560 维并做 RMSNorm：</p>
+<div class="math-block" aria-label="Target feature 压缩公式">
+<span class="math-line">C = concat(H<sup>(1)</sup>, H<sup>(9)</sup>, H<sup>(17)</sup>, H<sup>(25)</sup>, H<sup>(33)</sup>)</span>
+<span class="math-line">C′ = RMSNorm(C W<sub>c</sub><sup>T</sup>), &nbsp; W<sub>c</sub> ∈ R<sup>2560×12800</sup></span>
+</div>
+<p>当前词元与后面的 mask token 先查 Target 的 embedding table，形成 <code>X<sub>0</sub>∈R<sup>N×16×2560</sup></code>。DFlash 有 5 个 decoder layer；每层只用块表示产生 query，而 key/value 同时来自压缩后的 Target 上下文和当前块表示：</p>
+<div class="math-block" aria-label="DFlash attention 数据流公式">
+<span class="math-line">Q = RMSNorm(XW<sub>q</sub>), &nbsp; K = RMSNorm([C′;X]W<sub>k</sub>), &nbsp; V = [C′;X]W<sub>v</sub></span>
+<span class="math-line">Attention(X,C′) = softmax(QK<sup>T</sup>/√d) V</span>
+<span class="math-line">X ← X + W<sub>o</sub>Attention; &nbsp; X ← X + MLP(RMSNorm(X))</span>
+<span class="math-note">矩阵乘法负责通道混合和注意力聚合；RMSNorm、softmax、残差加法是逐元素或按行运算。</span>
+</div>
+<p>首次 prefill 时，<code>C′</code> 覆盖整段 prompt；之后每轮只把新接受路径的五路 feature 送入 DFlash，先前位置保存在 draft KV cache 中。DFlash 临时计算整个 16-token 块，构造 proposal 后再把 draft cache crop 到真实已确认长度，未被 target 接受的位置不会进入下一轮缓存。</p>
+<p>5 层结束并再次 RMSNorm 后得到 <code>Z∈R<sup>N×16×2560</sup></code>。Target 自己的 lm_head 将每个并行位置投影到完整词表，形成基础 logits：</p>
+<div class="math-block"><span class="math-line">L<sub>base</sub> = Z W<sub>lm</sub><sup>T</sup> ∈ R<sup>N×16×151936</sup></span></div>
+<p>这 16 个位置是一次并行算出的，因此 <code>L<sub>base</sub>[i]</code> 本身不知道树上某条具体路径已经选择了哪些 token。Domino GRU 的作用就是把这部分因果前缀补回来。</p>
 
-target 在 r 后预测 A  → 命中，走到 A
-target 在 A 后预测 B  → 命中，走到 B
-target 在 B 后预测 D  → B 的子节点只有 C/E，第一次不匹配
+<h3>1.2 Domino GRU 的矩阵和逐元素运算</h3>
+<p>对树上任意一条路径，令当前 token embedding 为 <code>x<sub>t</sub>∈R<sup>2560</sup></code>，父路径状态为 <code>h<sub>t-1</sub>∈R<sup>1024</sup></code>。checkpoint 使用单层、无 bias GRU。两次矩阵乘法分别产生输入项和循环项：</p>
+<div class="math-block" aria-label="Domino GRU 门控公式">
+<span class="math-line"><span class="operation-tag">矩阵乘</span>g<sub>i</sub> = W<sub>ih</sub>x<sub>t</sub>, &nbsp; W<sub>ih</sub>∈R<sup>3072×2560</sup></span>
+<span class="math-line"><span class="operation-tag">矩阵乘</span>g<sub>h</sub> = W<sub>hh</sub>h<sub>t-1</sub>, &nbsp; W<sub>hh</sub>∈R<sup>3072×1024</sup></span>
+<span class="math-line">g<sub>i</sub>=[i<sub>r</sub>,i<sub>z</sub>,i<sub>n</sub>], &nbsp; g<sub>h</sub>=[h<sub>r</sub>,h<sub>z</sub>,h<sub>n</sub>]</span>
+<span class="math-line"><span class="operation-tag">逐元素</span>r<sub>t</sub>=σ(i<sub>r</sub>+h<sub>r</sub>), &nbsp; z<sub>t</sub>=σ(i<sub>z</sub>+h<sub>z</sub>)</span>
+<span class="math-line"><span class="operation-tag">逐元素</span>n<sub>t</sub>=tanh(i<sub>n</sub>+r<sub>t</sub>⊙h<sub>n</sub>)</span>
+<span class="math-line"><span class="operation-tag">逐元素</span>h<sub>t</sub>=(1-z<sub>t</sub>)⊙n<sub>t</sub>+z<sub>t</sub>⊙h<sub>t-1</sub></span>
+</div>
+<p><code>r<sub>t</sub></code> 是 reset gate，控制旧状态参与候选状态计算的比例；<code>z<sub>t</sub></code> 是 update gate，在新候选状态 <code>n<sub>t</sub></code> 与旧路径状态之间逐维插值。所有 sigmoid、tanh、乘法 <code>⊙</code> 和加法都在 1,024 个 hidden channel 上逐元素执行。</p>
+<p>实现还预先计算整张词表的输入投影表 <code>T=E<sub>vocab</sub>W<sub>ih</sub><sup>T</sup>∈R<sup>151936×3072</sup></code>。扩展 token <code>v</code> 时直接 gather <code>T[v]</code>，只需再计算父状态的 <code>W<sub>hh</sub>h</code>；这样避免每个树节点重复执行 embedding lookup 后的 2,560→3,072 GEMV。</p>
 
-本轮提交：A, B, D
-其中 A/B 是被接受的 draft，D 是 target bonus token
-下一轮真实前缀：P + A + B + D</code></pre>
+<h3>1.3 路径状态如何修正候选 logits</h3>
+<p>Domino 的修正网络接收同一位置的 DFlash 表示 <code>z<sub>i</sub>∈R<sup>2560</sup></code> 和当前路径 GRU 状态 <code>h<sub>p</sub>∈R<sup>1024</sup></code>。第一层权重按输入切成 <code>W<sub>z</sub>∈R<sup>256×2560</sup></code> 与 <code>W<sub>s</sub>∈R<sup>256×1024</sup></code>：</p>
+<div class="math-block" aria-label="Domino logit 修正公式">
+<span class="math-line"><span class="operation-tag">矩阵乘</span>u<sub>i,p</sub> = W<sub>z</sub>z<sub>i</sub> + W<sub>s</sub>h<sub>p</sub> ∈ R<sup>256</sup></span>
+<span class="math-line"><span class="operation-tag">逐元素</span>m<sub>i,p</sub> = SiLU(u<sub>i,p</sub>) = u<sub>i,p</sub>⊙σ(u<sub>i,p</sub>)</span>
+<span class="math-line"><span class="operation-tag">矩阵乘</span>Δℓ<sub>i,p</sub> = W<sub>2</sub>m<sub>i,p</sub>, &nbsp; W<sub>2</sub>∈R<sup>151936×256</sup></span>
+<span class="math-line">ℓ<sub>i,p</sub> = L<sub>base</sub>[i] + Δℓ<sub>i,p</sub></span>
+</div>
+<p>因此，同一个并行位置 <code>i</code> 的 <code>z<sub>i</sub></code> 和基础 logits 可以被所有父节点共享；不同父节点只因 <code>h<sub>p</sub></code> 不同而得到不同修正分布。当前 checkpoint 的 <code>pure_draft_prefix_len=1</code>，第一层候选直接使用基础 logits；从下一层开始才使用路径 GRU 修正。</p>
+<p>DARTree 不为每个父节点计算完整的 151,936 维修正。代码先从该位置的基础 logits 取 K64 候选，并 gather <code>W<sub>2</sub></code> 对应的 64 行，随后执行 <code>[父节点数,256] × [256,64]</code> 的矩阵乘法，只为这 64 个词元计算路径修正。</p>
+
+<h3>1.4 DARTree 扩展、剪枝和 Target 验证</h3>
+<p>构树从当前根词元开始。每个深度上，所有 frontier 父节点共享位置 <code>i</code> 的 DFlash 表示，但各自携带独立 GRU 状态。对每个“父节点 × K64 候选”计算累计路径分数：</p>
+<div class="math-block"><span class="math-line">score(child) = score(parent) + logsoftmax<sub>K64 candidates</sub>(ℓ<sub>i,parent</sub>)[token]</span></div>
+<p>W48 构造在每个深度全局保留分数最高的最多 48 个父子组合，再分别用所选 token 更新 GRU 状态。16 个深度最多形成约 <code>48×16=768</code> 个 supertree 节点。最后按 <code>path score + depth_bonus×depth</code> 全局选出 B 个节点；本实验 <code>depth_bonus=-0.2</code>，父节点分数总是不低于后代，因此 Top-B 结果保持前缀闭合。</p>
+<table><thead><tr><th>保存的数据</th><th>用途</th></tr></thead><tbody>
+<tr><td><code>token[node]</code></td><td>该树节点代表的候选词元</td></tr>
+<tr><td><code>parent[node]</code></td><td>恢复路径、更新 branch-local GRU、构造 child map</td></tr>
+<tr><td><code>depth[node]</code></td><td>设置绝对 position id：<code>current_position + depth</code></td></tr>
+<tr><td><code>visibility[node,ancestor]</code></td><td>让节点只看已确认 prefix、自己的祖先和自己，不能看到兄弟分支</td></tr>
+</tbody></table>
+<p>送入 Target 的 query 是“当前根 + B 个树节点”，所以 B256 对应 257 queries。一次完整 Target forward 同时给每个节点产生下一 token logits。验证从根开始：若当前节点的 target argmax 恰好是某个子节点 token，就沿该边继续；第一次没有匹配子节点时停止，该 argmax 成为 bonus token。</p>
+<p>Target forward 暂时为整棵树产生 KV 和五路 hidden feature；提交时只按接受节点索引 gather 连续路径，compact KV cache，并丢弃所有未接受分支。下一轮 DFlash 读取的仍然是完整 Target 在真实已接受路径上产生的 feature，因此 DARTree 改变的是并行 proposal 形状，不改变最终 target 分布。</p>
+
+<h3>1.5 一个具体词元例子</h3>
+<figure class="flow-figure" aria-label="DARTree 接受路径示例">
+<div class="token-tree-wrap">
+<svg class="token-tree" viewBox="0 0 640 270" role="img" aria-labelledby="tree-title tree-desc">
+<title id="tree-title">草稿树中的连续接受路径</title>
+<desc id="tree-desc">目标模型依次接受 A 和 B，在 B 后预测树中不存在的 D，因此 D 成为 bonus token。</desc>
+<defs><marker id="tree-arrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7 Z" fill="#4f8060"/></marker></defs>
+<line class="edge accepted" x1="240" y1="45" x2="165" y2="95"/>
+<line class="edge" x1="240" y1="45" x2="330" y2="95"/>
+<line class="edge accepted" x1="165" y1="115" x2="165" y2="165"/>
+<line class="edge" x1="330" y1="115" x2="330" y2="165"/>
+<line class="edge" x1="165" y1="185" x2="105" y2="230"/>
+<line class="edge" x1="165" y1="185" x2="225" y2="230"/>
+<path d="M185 175 C280 175, 340 205, 410 225" fill="none" stroke="#4f8060" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#tree-arrow)"/>
+<circle class="node accepted" cx="240" cy="35" r="20"/><text x="240" y="35">r</text>
+<circle class="node accepted" cx="165" cy="105" r="20"/><text x="165" y="105">A</text>
+<circle class="node" cx="330" cy="105" r="20"/><text x="330" y="105">X</text>
+<circle class="node accepted" cx="165" cy="175" r="20"/><text x="165" y="175">B</text>
+<circle class="node" cx="330" cy="175" r="20"/><text x="330" y="175">Y</text>
+<circle class="node rejected" cx="105" cy="240" r="20"/><text x="105" y="240">C</text>
+<circle class="node rejected" cx="225" cy="240" r="20"/><text x="225" y="240">E</text>
+<circle class="node accepted" cx="430" cy="235" r="22"/><text x="430" y="235">D</text>
+<text class="annotation" x="465" y="222">target 在 B 后预测 D</text>
+<text class="annotation" x="465" y="242">树中无 D，停止并提交 bonus</text>
+</svg>
+</div>
+<figcaption>绿色实线是连续接受路径；绿色虚线指向不在草稿树中的 target bonus token。</figcaption>
+</figure>
+<div class="equation-panel">
+<p><strong>本轮提交：</strong>A、B、D，其中 A/B 是被接受的 draft，D 是 target bonus token。</p>
+<p><strong>下一轮真实前缀：</strong>P + A + B + D。</p>
+</div>
 <p>实验中的“单轮接受长度”或 <code>τ</code> 指一次 target verification 让输出前进的 token 数，即“连续匹配的 draft token + 最后的 target bonus token”。b16 的上限是 17。所有新方案产生的 token 都只作为候选，并在正确 target KV cache 上重新验证。</p>
 
-<h3>1.2 B、W 和 query count</h3>
+<h3>1.6 B、W 和 query count</h3>
 <table><thead><tr><th>符号</th><th>含义</th><th>例子</th></tr></thead><tbody>
 <tr><td><code>W</code></td><td>构造 supertree 时保留的前沿宽度，影响 proposal 搜索成本</td><td>W48</td></tr>
 <tr><td><code>B</code></td><td>送给 target 的候选节点上限，不包含已知根</td><td>B256</td></tr>
@@ -124,20 +191,16 @@ target 在 B 后预测 D  → B 的子节点只有 C/E，第一次不匹配
 <h2>4. 动态验证预算</h2>
 <h3>4.1 容量测量实现</h3>
 <p><code>run_capacity_roofline.py</code> 为每个 batch element 建独立 <code>DynamicCache</code>，构造前缀闭合的树 visibility mask，并真实执行完整词表输出和 argmax。对每个前缀长度 <code>L</code>、batch size <code>N</code> 和预算 <code>B</code> 测 target latency。</p>
-<pre><code>输入状态 (L, N)
-    │
-    ├─ sweep B ∈ {16,32,64,128,256,384,512}
-    │
-    ├─ 每点 warmup 2 次 + CUDA Event 正式测量 7 次
-    │
-    ▼
-Tmin = 该 (L,N) 下所有 B 的最低验证时间
-    │
-    ▼
-选择最大的 B，使 Tverify(B) ≤ 1.05 × Tmin
-    │
-    ▼
-得到“5% 平台容量”；尚未接入在线 DARTree scheduler</code></pre>
+<figure class="flow-figure" aria-label="动态验证容量测量流程">
+<div class="flow-stack">
+<div class="flow-node"><strong>固定输入状态 (L, N)</strong><span>前缀长度 L、batch size N</span></div>
+<div class="flow-node"><strong>遍历 verification budget</strong><span>B ∈ {16, 32, 64, 128, 256, 384, 512}</span></div>
+<div class="flow-node"><strong>重复测量 target latency</strong><span>每点 warmup 2 次，CUDA Event 正式测量 7 次</span></div>
+<div class="flow-node"><strong>计算最低延迟 Tmin</strong><span>取该 (L, N) 下所有预算的最低验证时间</span></div>
+<div class="flow-node accent"><strong>选择最大平台预算</strong><span>满足 Tverify(B) ≤ 1.05 × Tmin 的最大 B</span></div>
+<div class="flow-node result"><strong>得到 5% 平台容量</strong><span>该阶段只建立查表规律，尚未接入在线 scheduler</span></div>
+</div>
+</figure>
 
 <h3>4.2 具体例子：前缀 512、batch 4</h3>
 <p>固定 B256 时，一批要验证 <code>4×257=1028</code> 个 query；容量选择器改为每请求 B64，总 query 为 <code>4×65=260</code>。B64 的验证延迟为 37.909 ms，相对该状态的固定 B256 低 52.46%。减少的是一次 target verification 的 latency，不包含 acceptance 下降后可能增加的轮次。</p>
@@ -160,37 +223,32 @@ Tmin = 该 (L,N) 下所有 B 的最低验证时间
 <h2>5. 基于 stale target feature 的第二块预测</h2>
 <h3>5.1 想法与具体例子</h3>
 <p>原 b16 树最多向前 16 个 draft 位置。既然 target 验证 257 和 273 queries 都约 38 ms，可以在一条深度 16 叶子后再挂 16 个节点。但第二块本应读取第一块新 token 在 target 第 <code>1/9/17/25/33</code> 层的表示；这些 feature 在验证第一块前还不存在。</p>
-<pre><code>第一块真实需要：h_t
-第二块真实需要：h_{t+1}, h_{t+2}, ..., h_{t+16}
-
-实现的零阶保持：
-ĥ_{t+1}=ĥ_{t+2}=...=ĥ_{t+16}=h_t
-
-例：
-原树最高分深度 16 路径 r→A→...→P
-复制 branch-local draft KV cache
-用 [h_t × 16] 再跑一次 DFlash
-得到第二块单链 Q→R→...
-挂到 P 后，形成 257+16=273 query 的合并树</code></pre>
+<div class="equation-panel">
+<p><strong>第一块所需特征：</strong>h<sub>t</sub>。</p>
+<p><strong>第二块真实所需特征：</strong>h<sub>t+1</sub>, h<sub>t+2</sub>, …, h<sub>t+16</sub>。</p>
+<p><strong>零阶保持近似：</strong>ĥ<sub>t+1</sub> = ĥ<sub>t+2</sub> = … = ĥ<sub>t+16</sub> = h<sub>t</sub>。</p>
+</div>
+<figure class="flow-figure" aria-label="Stale feature 第二块扩展示例">
+<div class="flow-stack">
+<div class="flow-node"><strong>选择原树最高分的深度 16 路径</strong><span>r → A → … → P</span></div>
+<div class="flow-node"><strong>复制 branch-local draft KV cache</strong><span>保留该分支的 Domino 因果状态</span></div>
+<div class="flow-node"><strong>用 [h<sub>t</sub> × 16] 再跑一次 DFlash</strong><span>以过期特征近似未来 16 个位置</span></div>
+<div class="flow-node"><strong>生成第二块单链</strong><span>Q → R → …</span></div>
+<div class="flow-node result"><strong>挂接到叶子 P</strong><span>形成 257 + 16 = 273 queries 的合并树</span></div>
+</div>
+</figure>
 
 <h3>5.2 代码流程</h3>
-<pre><code>select_scored_path_at_depth()
-  选最高分深度 16 叶子并恢复父链
-        │
-zero_order_hold_target_context()
-  复制最后一个精确 feature 16 次
-        │
-build_multiblock_continuation()
-  复制 draft cache，第二次 DFlash forward，构造 16 节点链
-        │
-merge_tree_extension()
-  把局部链父索引映射到原 B256 树
-        │
-verify_multiblock_shadow()
-  复制正确 target cache，验证 273-query 合并树
-        │
-hybrid_extension_acceptance()
-  原 B256 路径沿用原判断，只重放新增链，隔离 BF16 shape drift</code></pre>
+<figure class="flow-figure" aria-label="Stale feature 第二块代码流程">
+<div class="flow-stack">
+<div class="flow-node"><strong><code>select_scored_path_at_depth()</code></strong><span>选择最高分深度 16 叶子并恢复父链</span></div>
+<div class="flow-node"><strong><code>zero_order_hold_target_context()</code></strong><span>复制最后一个精确 feature 16 次</span></div>
+<div class="flow-node"><strong><code>build_multiblock_continuation()</code></strong><span>复制 draft cache，第二次 DFlash forward 构造 16 节点链</span></div>
+<div class="flow-node"><strong><code>merge_tree_extension()</code></strong><span>把局部链父索引映射到原 B256 树</span></div>
+<div class="flow-node accent"><strong><code>verify_multiblock_shadow()</code></strong><span>复制正确 target cache，验证 273-query 合并树</span></div>
+<div class="flow-node result"><strong><code>hybrid_extension_acceptance()</code></strong><span>沿用原 B256 判断，只重放新增链以隔离 BF16 shape drift</span></div>
+</div>
+</figure>
 
 <h3>5.3 实验结果与成本</h3>
 <table><thead><tr><th>结果</th><th>计算口径</th><th>结论</th></tr></thead><tbody>
@@ -205,30 +263,66 @@ hybrid_extension_acceptance()
 <section id="prefetch">
 <h2>6. 第 34 层就绪后的跨卡预取</h2>
 <h3>6.1 设想的双卡流程</h3>
-<pre><code>GPU 0：target 第 1–34 层
-           │ 五路 Domino feature 全部就绪
-           ├──────────────┐
-           │              │
-           ▼              ▼
-枚举 m 个完整下一状态     GPU 0 继续第 35–36 层 + lm_head
-(接受路径 + bonus)        得到真实下一状态
-           │              │
-           ▼              │
-GPU 1 批量预跑 m 份 drafter
-           │              │
-           └──────┬───────┘
-                  ▼
-          命中则复用；未命中全部丢弃并重算</code></pre>
+<figure class="flow-figure" aria-label="双 GPU 跨卡预取流程">
+<div class="architecture-wrap">
+<svg class="architecture-diagram" viewBox="0 0 720 520" role="img" aria-labelledby="dual-title dual-desc">
+<title id="dual-title">第 34 层后的双 GPU 并行预取流程</title>
+<desc id="dual-desc">GPU 0 在第 34 层产生五路 Domino 特征后，一边继续目标模型尾部，一边枚举完整下一状态并发送给 GPU 1。GPU 1 批量预跑 drafter，最终与 GPU 0 的真实状态汇合并判断是否命中。</desc>
+<defs><marker id="arch-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#647680"/></marker></defs>
+<rect class="lane" x="12" y="34" width="470" height="430" rx="9"/>
+<rect class="lane" x="498" y="34" width="210" height="430" rx="9"/>
+<text class="lane-label" x="32" y="61">GPU 0 · Target</text>
+<text class="lane-label" x="518" y="61">GPU 1 · Drafter</text>
+
+<rect class="stage stage-accent" x="105" y="82" width="284" height="62" rx="7"/>
+<text class="stage-title" x="247" y="107" text-anchor="middle">Target 第 1–34 层</text>
+<text class="stage-copy" x="247" y="128" text-anchor="middle">五路 Domino feature 全部就绪</text>
+<path class="connector" d="M247 144 L247 169" marker-end="url(#arch-arrow)"/>
+<circle class="split-dot" cx="247" cy="180" r="5"/>
+<text class="stage-copy" x="259" y="184">并行分叉</text>
+
+<path class="connector" d="M247 185 C247 202, 139 196, 139 220" marker-end="url(#arch-arrow)"/>
+<path class="connector" d="M247 185 C247 202, 363 196, 363 220" marker-end="url(#arch-arrow)"/>
+<rect class="stage" x="34" y="224" width="210" height="78" rx="7"/>
+<text class="stage-title" x="139" y="249" text-anchor="middle">枚举 m 个完整状态</text>
+<text class="stage-copy" x="139" y="270" text-anchor="middle">接受路径 + bonus token</text>
+<text class="stage-copy" x="139" y="289" text-anchor="middle">发送 feature 与状态假设</text>
+
+<rect class="stage" x="263" y="224" width="200" height="78" rx="7"/>
+<text class="stage-title" x="363" y="249" text-anchor="middle">继续 Target 尾部</text>
+<text class="stage-copy" x="363" y="270" text-anchor="middle">第 35–36 层 + lm_head</text>
+<text class="stage-copy" x="363" y="289" text-anchor="middle">得到真实下一状态</text>
+
+<path class="connector" d="M244 263 C395 263, 442 266, 520 305" marker-end="url(#arch-arrow)"/>
+<rect class="stage stage-accent" x="517" y="312" width="172" height="82" rx="7"/>
+<text class="stage-title" x="603" y="338" text-anchor="middle">批量预跑 Drafter</text>
+<text class="stage-copy" x="603" y="359" text-anchor="middle">同时计算 m 份</text>
+<text class="stage-copy" x="603" y="378" text-anchor="middle">下一轮 proposal</text>
+
+<path class="connector" d="M363 302 L363 406 C363 424, 389 424, 410 424" marker-end="url(#arch-arrow)"/>
+<path class="connector" d="M603 394 L603 408 C603 424, 520 424, 464 424" marker-end="url(#arch-arrow)"/>
+<circle class="split-dot" cx="437" cy="424" r="6"/>
+<text class="stage-copy" x="437" y="411" text-anchor="middle">汇合</text>
+<path class="connector" d="M437 430 L437 450" marker-end="url(#arch-arrow)"/>
+<rect class="stage stage-result" x="236" y="456" width="402" height="48" rx="7"/>
+<text class="stage-title" x="437" y="477" text-anchor="middle">真实状态命中候选：复用预跑结果</text>
+<text class="stage-copy" x="437" y="495" text-anchor="middle">未命中：丢弃候选，并按真实状态重新运行 drafter</text>
+</svg>
+</div>
+<figcaption>横向分叉表示 GPU 0 的 target 尾部与 GPU 1 的下一轮 drafter 同时执行；两路结果都就绪后才能决定是否复用。</figcaption>
+</figure>
 <p>这个方案需要三个条件同时成立：A 能用少量假设覆盖真实状态；B target 尾部有足够时间且 drafter 小批量高效；C 或者能更早得到可用 feature，扩大重叠窗口。</p>
 
 <h3>6.2 Probe A：完整下一状态预测</h3>
 <p>代码在第 34 层对 B64 树的 65 个节点保存 logit-lens 分布。<code>enumerate_hypotheses()</code> 沿树累计“继续走某条已有边”的对数概率，并为每个停止节点枚举 bonus token，最后对完整状态 <code>H=(接受路径, bonus)</code> 全局排序。</p>
-<pre><code>例：真实结果为
-接受路径 r→A→B，bonus=D
-
-假设 1：(r→A→B, bonus=C)  路径对、bonus 错 → 不命中
-假设 2：(r→A,   bonus=D)  bonus 对、路径错 → 不命中
-假设 3：(r→A→B, bonus=D)  两部分都对       → 命中</code></pre>
+<div class="equation-panel">
+<p><strong>真实结果：</strong>接受路径 r → A → B，bonus = D。</p>
+</div>
+<div class="hypothesis-grid" aria-label="完整状态假设命中示例">
+<div class="hypothesis-card"><strong>假设 1 · 不命中</strong><span>(r → A → B, bonus = C)</span><span>路径正确，但 bonus 错误。</span></div>
+<div class="hypothesis-card"><strong>假设 2 · 不命中</strong><span>(r → A, bonus = D)</span><span>bonus 正确，但路径错误。</span></div>
+<div class="hypothesis-card hit"><strong>假设 3 · 命中</strong><span>(r → A → B, bonus = D)</span><span>接受路径和 bonus 都正确。</span></div>
+</div>
 <table><thead><tr><th>保留假设数</th><th>完整状态命中</th><th>仅路径命中</th></tr></thead><tbody>
 <tr><td>top-1</td><td>20.20%</td><td>25.66%</td></tr>
 <tr><td>top-2</td><td>29.16%</td><td>35.38%</td></tr>
@@ -263,35 +357,30 @@ extrapolate = [h1, h9, h17, h25, 2h25-h17]</code></pre>
 <section id="rejected-state">
 <h2>7. 错误前缀 target state 的朴素回收</h2>
 <h3>7.1 具体例子</h3>
-<pre><code>真实前缀 P，草稿走了错误词元 x
-target 已经并行算出：
-  p(. | P,x), p(. | P,x,y), ...
-
-target 最终给出的正确 bonus 是 b
-
-朴素回收：
-  从错误状态分布中取候选 a,c,...
-  把它们平移到正确前缀 P,b 后
-  在正确 target KV cache 上重新验证
-
-注意：p(. | P,x) ≠ p(. | P,b)
-旧状态只作为 proposal，绝不直接提交</code></pre>
+<div class="equation-panel">
+<p><strong>错误草稿前缀：</strong>P, x；target 已并行得到 p(· | P,x)、p(· | P,x,y) 等分布。</p>
+<p><strong>真实修正：</strong>target 最终给出的正确 bonus 是 b，而且 p(· | P,x) ≠ p(· | P,b)。</p>
+</div>
+<figure class="flow-figure" aria-label="错误 target state 回收流程">
+<div class="flow-stack">
+<div class="flow-node"><strong>从错误状态分布取候选</strong><span>例如 a、c 等高分词元</span></div>
+<div class="flow-node"><strong>把候选迁移到正确前缀</strong><span>从 P,x 下的状态平移到 P,b 后</span></div>
+<div class="flow-node accent"><strong>在正确 target KV cache 上重新验证</strong><span>旧状态只产生 proposal，不能直接提交</span></div>
+<div class="flow-node result"><strong>只提交重新验证通过的连续路径</strong><span>保证生成结果仍来自完整 target 模型</span></div>
+</div>
+</figure>
 
 <h3>7.2 实现了四种构树器</h3>
 <p><code>build_rejected_state_recycling_tree()</code> 支持局部后代、全树同深度 target argmax 和原 draft suffix；最强版本 <code>build_depth_mixture_recycling_tree()</code> 在每个未来深度收集所有错误状态的完整词表分布，对每个 token 取跨状态最大归一化分数，再调用 DDTree 构造 B64 前缀闭合树。</p>
-<pre><code>错误状态 logits（同一未来深度）
-    │ log_softmax
-    ▼
-对每个 token 取所有错误状态中的 max score
-    │ 再归一化并保留 top-64
-    ▼
-DDTree best-first search → B64 回收树
-    │
-    ▼
-正确 cache P,b 上 shadow verify
-    │
-    ▼
-与同一 P,b 的正常下一轮 DARTree 配对</code></pre>
+<figure class="flow-figure" aria-label="错误状态混合树构造流程">
+<div class="flow-stack">
+<div class="flow-node"><strong>收集同一未来深度的错误状态 logits</strong><span>分别执行 log_softmax</span></div>
+<div class="flow-node"><strong>跨状态聚合每个 token</strong><span>取最大归一化分数，再归一化并保留 top-64</span></div>
+<div class="flow-node"><strong>DDTree best-first search</strong><span>构造前缀闭合的 B64 回收树</span></div>
+<div class="flow-node accent"><strong>在正确 cache P,b 上 shadow verify</strong><span>错误状态不进入正式 target cache</span></div>
+<div class="flow-node result"><strong>逐轮配对正常下一轮 DARTree</strong><span>两条路径使用相同真实前缀 P,b</span></div>
+</div>
+</figure>
 
 <h3>7.3 回收候选质量与性能</h3>
 <p>283 个可配对轮次中，最强混合树在 237 轮非空，因此可用比例 <code>237/283=83.75%</code>。只看这 237 轮：</p>
@@ -306,26 +395,19 @@ DDTree best-first search → B64 回收树
 <h2>8. Bonus token 重置 Domino GRU</h2>
 <h3>8.1 方法区别</h3>
 <p>这里不再复用因果前缀错误的 target hidden state，而是复用 DFlash 一次并行算出的块位置 <code>z_i</code>。Domino 本来就用 GRU 为每条树分支注入具体前缀，因此可以丢弃错误分支 GRU state，用真实 bonus 重置。</p>
-<pre><code>例：b16 当前轮在深度 d=5 停止
-已接受：P → A → B → C → D → E
-target bonus：F
-
-replay_domino_prefix_hidden(P,A,B,C,D,E)
-        │
-        ▼
-stop_hidden
-        │ 输入真实 F
-        ▼
-reset_hidden = GRU(F, stop_hidden)
-        │
-        ▼
-切片复用 z[d+1 : 16]，只剩 16-d-1 个位置
-        │
-        ├─ build bonus_reset_chain
-        └─ build bonus_reset_dartree (B64/W12)
-        │
-        ▼
-在正确前缀 P,A,B,C,D,E,F 上重新验证</code></pre>
+<figure class="flow-figure" aria-label="Bonus token 重置 Domino GRU 流程">
+<div class="flow-stack">
+<div class="flow-node"><strong>当前轮在深度 d = 5 停止</strong><span>已接受 P → A → B → C → D → E；target bonus = F</span></div>
+<div class="flow-node"><strong><code>replay_domino_prefix_hidden()</code></strong><span>依次重放已接受前缀，得到 stop_hidden</span></div>
+<div class="flow-node accent"><strong>用真实 bonus 重置 GRU</strong><span>reset_hidden = GRU(F, stop_hidden)</span></div>
+<div class="flow-node"><strong>切片复用剩余并行位置</strong><span>使用 z[d+1 : 16]，剩余 horizon 为 16-d-1</span></div>
+<div class="flow-options" aria-label="两种重置候选构造器">
+<div class="flow-option"><strong><code>bonus_reset_chain</code></strong><span>构造一条重置后的单链</span></div>
+<div class="flow-option"><strong><code>bonus_reset_dartree</code></strong><span>构造 B64/W12 重置树</span></div>
+</div>
+<div class="flow-node result"><strong>在正确前缀上重新验证</strong><span>P → A → B → C → D → E → F</span></div>
+</div>
+</figure>
 
 <h3>8.2 实际代码</h3>
 <ul>
@@ -353,18 +435,18 @@ reset_hidden = GRU(F, stop_hidden)
 <section id="suffix">
 <h2>9. 严格连续匹配后缀回收</h2>
 <h3>9.1 算法只保留原树中真实存在的连续边</h3>
-<pre><code>真实前缀 P，target bonus=b
-原错误分支：P → x → a → c → d
-
-target 在 P,x 后预测 a
-  原树确有 x→a：保留 a
-target 在 P,x,a 后预测 c
-  原树确有 a→c：保留 c
-target 在 P,x,a,c 后预测 e
-  原树下一边是 d，不匹配：立即停止
-
-得到回收候选：P → b → a → c
-然后在正确 P,b cache 上重新验证 a,c</code></pre>
+<div class="equation-panel">
+<p><strong>真实前缀：</strong>P，target bonus = b。</p>
+<p><strong>原错误分支：</strong>P → x → a → c → d。</p>
+</div>
+<ol class="trace-list" aria-label="严格连续匹配后缀的逐边判断">
+<li class="pass"><span class="trace-badge">保留第 1 边</span><span>target 在 P,x 后预测 a；原树存在 x → a，因此保留 a。</span></li>
+<li class="pass"><span class="trace-badge">保留第 2 边</span><span>target 在 P,x,a 后预测 c；原树存在 a → c，因此继续保留 c。</span></li>
+<li class="stop"><span class="trace-badge">停止</span><span>target 在 P,x,a,c 后预测 e；原树下一边是 d，第一次不匹配后立即停止。</span></li>
+</ol>
+<div class="equation-panel">
+<p><strong>回收候选：</strong>P → b → a → c；随后在正确的 P,b cache 上重新验证 a、c。</p>
+</div>
 <p><code>build_verified_suffix_recycling_tree()</code> 对停止节点的每个被拒绝子节点循环执行：读取该错误节点的 target argmax，用 <code>child_map[(parent, token)]</code> 查询原树是否存在完全相同的边；存在才加入前缀树并继续，否则立即停止。多条链只合并公共前缀，不合成新边。</p>
 
 <h3>9.2 可用率、迁移率与性能</h3>
@@ -396,20 +478,15 @@ target 在 P,x,a,c 后预测 e
 <section id="directions">
 <h2>11. 下一步方向</h2>
 <h3>11.1 第一优先级：真实 ragged batch 动态预算</h3>
-<pre><code>在线请求集合 {(prefix length Li, uncertainty ui)}
-        │
-        ▼
-根据当前 batch 与 Li 估计共享 query capacity Q
-        │
-        ▼
-先给每请求最小 B，再按 ui 分配剩余节点
-        │
-        ▼
-一次 target forward 验证多棵不同大小的树
-        │
-        ▼
-比较固定 B64 / 固定 B256 / 固定总 query / 动态分配
-指标：吞吐、TPOT、P95 latency、acceptance、公平性</code></pre>
+<figure class="flow-figure" aria-label="真实 ragged batch 动态预算流程">
+<div class="flow-stack">
+<div class="flow-node"><strong>收集在线请求状态</strong><span>每个请求包含 prefix length L<sub>i</sub> 与 uncertainty u<sub>i</sub></span></div>
+<div class="flow-node"><strong>估计共享 query capacity Q</strong><span>依据当前 batch size 与各请求前缀长度</span></div>
+<div class="flow-node"><strong>分配每请求 verification budget</strong><span>先保证最小 B，再按 uncertainty 分配剩余节点</span></div>
+<div class="flow-node accent"><strong>一次 target forward 验证 ragged trees</strong><span>同批请求可以使用不同大小的 proposal tree</span></div>
+<div class="flow-node result"><strong>与固定策略进行同口径比较</strong><span>B64、B256、固定总 query、动态分配；报告吞吐、TPOT、P95 latency、acceptance 与公平性</span></div>
+</div>
+</figure>
 <p>Roofline 已证明容量随前缀长度和 batch size 变化；下一步需要把该规律接入真实 ragged batch。控制器必须同时考虑构树时间和预算带来的 acceptance 边际收益，而不是只选择平台区最大的 B。</p>
 
 <h3>11.2 若允许训练：原生多 horizon drafter</h3>

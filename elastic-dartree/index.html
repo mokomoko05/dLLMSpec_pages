@@ -265,51 +265,51 @@
 <h3>6.1 设想的双卡流程</h3>
 <figure class="flow-figure" aria-label="双 GPU 跨卡预取流程">
 <div class="architecture-wrap">
-<svg class="architecture-diagram" viewBox="0 0 720 520" role="img" aria-labelledby="dual-title dual-desc">
+<svg class="architecture-diagram" viewBox="0 0 760 590" role="img" aria-labelledby="dual-title dual-desc">
 <title id="dual-title">第 34 层后的双 GPU 并行预取流程</title>
-<desc id="dual-desc">GPU 0 在第 34 层产生五路 Domino 特征后，一边继续目标模型尾部，一边枚举完整下一状态并发送给 GPU 1。GPU 1 批量预跑 drafter，最终与 GPU 0 的真实状态汇合并判断是否命中。</desc>
+<desc id="dual-desc">GPU 0 在第 34 层产生五路 Domino 特征后，将特征和当前树状态发送给 GPU 1，同时继续执行目标模型尾部与 LM head。GPU 1 枚举 m 个完整下一状态，并批量预跑 m 份 drafter。两张卡的结果就绪后，使用 GPU 0 得到的真实状态选择是否复用 GPU 1 的预跑结果。</desc>
 <defs><marker id="arch-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#647680"/></marker></defs>
-<rect class="lane" x="12" y="34" width="470" height="430" rx="9"/>
-<rect class="lane" x="498" y="34" width="210" height="430" rx="9"/>
+<rect class="lane" x="12" y="34" width="338" height="472" rx="9"/>
+<rect class="lane" x="410" y="34" width="338" height="472" rx="9"/>
 <text class="lane-label" x="32" y="61">GPU 0 · Target</text>
-<text class="lane-label" x="518" y="61">GPU 1 · Drafter</text>
+<text class="lane-label" x="430" y="61">GPU 1 · Hypothesis + Drafter</text>
 
-<rect class="stage stage-accent" x="105" y="82" width="284" height="62" rx="7"/>
-<text class="stage-title" x="247" y="107" text-anchor="middle">Target 第 1–34 层</text>
-<text class="stage-copy" x="247" y="128" text-anchor="middle">五路 Domino feature 全部就绪</text>
-<path class="connector" d="M247 144 L247 169" marker-end="url(#arch-arrow)"/>
-<circle class="split-dot" cx="247" cy="180" r="5"/>
-<text class="stage-copy" x="259" y="184">并行分叉</text>
+<rect class="stage stage-accent" x="53" y="86" width="256" height="68" rx="7"/>
+<text class="stage-title" x="181" y="112" text-anchor="middle">Target 第 1–34 层</text>
+<text class="stage-copy" x="181" y="135" text-anchor="middle">五路 Domino feature 全部就绪</text>
+<path class="connector" d="M181 154 L181 183"/>
+<circle class="split-dot" cx="181" cy="190" r="5"/>
 
-<path class="connector" d="M247 185 C247 202, 139 196, 139 220" marker-end="url(#arch-arrow)"/>
-<path class="connector" d="M247 185 C247 202, 363 196, 363 220" marker-end="url(#arch-arrow)"/>
-<rect class="stage" x="34" y="224" width="210" height="78" rx="7"/>
-<text class="stage-title" x="139" y="249" text-anchor="middle">枚举 m 个完整状态</text>
-<text class="stage-copy" x="139" y="270" text-anchor="middle">接受路径 + bonus token</text>
-<text class="stage-copy" x="139" y="289" text-anchor="middle">发送 feature 与状态假设</text>
+<path class="connector" d="M181 195 L181 224" marker-end="url(#arch-arrow)"/>
+<rect class="stage" x="53" y="232" width="256" height="92" rx="7"/>
+<text class="stage-title" x="181" y="260" text-anchor="middle">继续 Target 尾部</text>
+<text class="stage-copy" x="181" y="283" text-anchor="middle">第 35–36 层 + LM head</text>
+<text class="stage-copy" x="181" y="305" text-anchor="middle">输出真实接受路径与 bonus token</text>
 
-<rect class="stage" x="263" y="224" width="200" height="78" rx="7"/>
-<text class="stage-title" x="363" y="249" text-anchor="middle">继续 Target 尾部</text>
-<text class="stage-copy" x="363" y="270" text-anchor="middle">第 35–36 层 + lm_head</text>
-<text class="stage-copy" x="363" y="289" text-anchor="middle">得到真实下一状态</text>
+<text class="transfer-label" x="380" y="174" text-anchor="middle">P2P：Domino features + 当前树状态</text>
+<path class="connector connector-transfer" d="M188 190 L579 190 L579 224" marker-end="url(#arch-arrow)"/>
+<rect class="stage" x="451" y="232" width="256" height="92" rx="7"/>
+<text class="stage-title" x="579" y="260" text-anchor="middle">枚举 m 个完整状态</text>
+<text class="stage-copy" x="579" y="283" text-anchor="middle">每个状态 = 接受路径 + bonus token</text>
+<text class="stage-copy" x="579" y="305" text-anchor="middle">保留排序最高的 m 个假设</text>
 
-<path class="connector" d="M244 263 C395 263, 442 266, 520 305" marker-end="url(#arch-arrow)"/>
-<rect class="stage stage-accent" x="517" y="312" width="172" height="82" rx="7"/>
-<text class="stage-title" x="603" y="338" text-anchor="middle">批量预跑 Drafter</text>
-<text class="stage-copy" x="603" y="359" text-anchor="middle">同时计算 m 份</text>
-<text class="stage-copy" x="603" y="378" text-anchor="middle">下一轮 proposal</text>
+<path class="connector" d="M579 324 L579 350" marker-end="url(#arch-arrow)"/>
+<rect class="stage stage-accent" x="451" y="358" width="256" height="92" rx="7"/>
+<text class="stage-title" x="579" y="386" text-anchor="middle">批量预跑 m 份 Drafter</text>
+<text class="stage-copy" x="579" y="409" text-anchor="middle">每个假设生成下一轮 proposal</text>
+<text class="stage-copy" x="579" y="431" text-anchor="middle">暂存对应的 draft cache 与树</text>
 
-<path class="connector" d="M363 302 L363 406 C363 424, 389 424, 410 424" marker-end="url(#arch-arrow)"/>
-<path class="connector" d="M603 394 L603 408 C603 424, 520 424, 464 424" marker-end="url(#arch-arrow)"/>
-<circle class="split-dot" cx="437" cy="424" r="6"/>
-<text class="stage-copy" x="437" y="411" text-anchor="middle">汇合</text>
-<path class="connector" d="M437 430 L437 450" marker-end="url(#arch-arrow)"/>
-<rect class="stage stage-result" x="236" y="456" width="402" height="48" rx="7"/>
-<text class="stage-title" x="437" y="477" text-anchor="middle">真实状态命中候选：复用预跑结果</text>
-<text class="stage-copy" x="437" y="495" text-anchor="middle">未命中：丢弃候选，并按真实状态重新运行 drafter</text>
+<path class="connector" d="M181 324 L181 474 L365 474" marker-end="url(#arch-arrow)"/>
+<path class="connector" d="M579 450 L579 474 L395 474" marker-end="url(#arch-arrow)"/>
+<circle class="split-dot" cx="380" cy="474" r="7"/>
+<text class="stage-copy" x="380" y="462" text-anchor="middle">按真实状态匹配</text>
+<path class="connector" d="M380 481 L380 514" marker-end="url(#arch-arrow)"/>
+<rect class="stage stage-result" x="142" y="522" width="476" height="54" rx="7"/>
+<text class="stage-title" x="380" y="545" text-anchor="middle">命中候选：复用 GPU 1 的预跑结果</text>
+<text class="stage-copy" x="380" y="565" text-anchor="middle">未命中：丢弃候选，并按真实状态重新运行 drafter</text>
 </svg>
 </div>
-<figcaption>横向分叉表示 GPU 0 的 target 尾部与 GPU 1 的下一轮 drafter 同时执行；两路结果都就绪后才能决定是否复用。</figcaption>
+<figcaption>第 34 层结束后，GPU 0 继续执行 target 尾部；GPU 1 使用跨卡传来的 Domino features 和当前树状态，完成状态枚举与批量 drafter 预跑。两路结果就绪后再按真实状态选择是否复用。</figcaption>
 </figure>
 <p>这个方案需要三个条件同时成立：A 能用少量假设覆盖真实状态；B target 尾部有足够时间且 drafter 小批量高效；C 或者能更早得到可用 feature，扩大重叠窗口。</p>
 

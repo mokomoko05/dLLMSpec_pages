@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="Elastic DARTree 的逐算法实现说明：基线流程、代码函数、具体例子、指标分母、实验数字与结论边界。">
+<meta name="description" content="Elastic DARTree：动态验证预算、跨轮预测、跨卡预取与拒绝后状态回收的代码实现和实验结果。">
 <title>Elastic DARTree 系统探索</title><link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -10,7 +10,7 @@
 <main><article>
 <header class="article-header">
 <h1>Elastic DARTree 系统探索</h1>
-<p class="subtitle">从一轮 DARTree 开始，逐项解释代码实现、算法流程、比较基线和每个百分比的分母</p>
+<p class="subtitle">动态验证预算、跨轮预测、跨卡预取与拒绝后状态回收的实现和实验结果</p>
 <dl class="article-meta">
 <div><dt>实验时间</dt><dd>2026-08-25</dd></div>
 <div><dt>硬件</dt><dd>单张 NVIDIA A100 80GB PCIe</dd></div>
@@ -21,27 +21,27 @@
 
 <section class="abstract">
 <h2>摘要</h2>
-<p>这组实验不是一个单独的新算法，而是一棵按依赖关系展开的系统设计树：先确认 GPU 的 target verification 容量是否随负载变化，再依次尝试把空闲容量用于更深预测、跨卡预取和拒绝后状态回收。为避免把不同口径混在一起，本页对每项实验都明确回答五个问题：实现了什么代码、运行时发生什么、和谁比较、数字如何计算、证据能支持到什么程度。</p>
-<p>唯一保留的主线是<strong>动态验证预算</strong>：18 个“前缀长度 × batch size”状态上，按 5% 延迟平台选择预算，使 target verification 阶段相对固定 B256 平均减少 27.16% 延迟；这还不是端到端加速。其余方案的失败原因也不同：stale second block 缺少新 target feature；跨卡预取猜不中完整下一状态；早层特征替代降低 acceptance；三种回收方案则无法在正确新前缀下保留足够候选质量。</p>
+<p>本实验沿 DARTree 的系统瓶颈展开：先测量 target verification 容量随前缀长度和 batch size 的变化，再尝试把剩余容量用于更深预测、跨卡预取和拒绝后状态回收。所有候选仍由完整 target 模型验证，因此这些改动只影响 proposal 和运行时间，不改变生成分布。</p>
+<p><strong>动态验证预算</strong>是唯一保留的主线。在 18 个“前缀长度 × batch size”状态上，按 5% 延迟平台选择预算，使 target verification 阶段相对固定 B256 平均减少 27.16% 延迟；端到端收益仍需在真实 ragged batch 中验证。其他方案均未达到继续门槛：stale second block 缺少新的 target feature；跨卡预取的完整状态命中率不足；早层特征替代降低 acceptance；三种状态回收方案无法在正确新前缀下保留足够候选质量。</p>
 </section>
 
 <nav class="toc"><h2>目录</h2><ol>
-<li><a href="#baseline">先理解一轮 DARTree</a></li>
-<li><a href="#metrics">指标与证据口径</a></li>
-<li><a href="#code-map">实现代码总览</a></li>
-<li><a href="#capacity">算法 1：动态验证预算</a></li>
-<li><a href="#multiblock">算法 2：stale-feature 第二块</a></li>
-<li><a href="#prefetch">算法 3：跨卡预取 A/B/C</a></li>
-<li><a href="#rejected-state">算法 4：错误 target state 回收</a></li>
-<li><a href="#bonus-reset">算法 5：bonus-token GRU reset</a></li>
-<li><a href="#suffix">算法 6：严格连续后缀回收</a></li>
-<li><a href="#comparison">结果与证据总表</a></li>
+<li><a href="#baseline">DARTree 基线流程</a></li>
+<li><a href="#metrics">实验指标与结果口径</a></li>
+<li><a href="#code-map">代码实现概览</a></li>
+<li><a href="#capacity">动态验证预算</a></li>
+<li><a href="#multiblock">Stale-feature 第二块预测</a></li>
+<li><a href="#prefetch">第 34 层跨卡预取</a></li>
+<li><a href="#rejected-state">错误前缀 target state 回收</a></li>
+<li><a href="#bonus-reset">Bonus token 重置 Domino GRU</a></li>
+<li><a href="#suffix">严格连续匹配后缀回收</a></li>
+<li><a href="#comparison">实验结果总表</a></li>
 <li><a href="#directions">下一步方向</a></li>
 <li><a href="#reproducibility">复现与限制</a></li>
 </ol></nav>
 
 <section id="baseline">
-<h2>1. 先理解一轮 DARTree</h2>
+<h2>1. DARTree 基线流程</h2>
 <p>DFlash/DOMINO drafter 不是独立的小语言模型。它读取目标模型已经确认的上下文，并抽取目标模型第 <code>1/9/17/25/33</code> 层的隐藏表示；随后一次并行生成 16 个位置的基础分布。Domino 的 GRU 根据每条具体前缀修正这些并行分布，DARTree 再把多条分支组织成一棵树。</p>
 <pre><code>已确认前缀 P，最后词元为 r
         │
@@ -82,7 +82,7 @@ target 在 B 后预测 D  → B 的子节点只有 C/E，第一次不匹配
 本轮提交：A, B, D
 其中 A/B 是被接受的 draft，D 是 target bonus token
 下一轮真实前缀：P + A + B + D</code></pre>
-<p>本页的“单轮接受长度”或 <code>τ</code> 指一次 target verification 让输出前进多少 token，即“连续匹配的 draft token + 最后的 target bonus token”。b16 的上限是 17。所有新方案产生的 token 都只是候选，最终仍在正确 target KV cache 上重新验证，因此不会改变目标模型的采样规则。</p>
+<p>实验中的“单轮接受长度”或 <code>τ</code> 指一次 target verification 让输出前进的 token 数，即“连续匹配的 draft token + 最后的 target bonus token”。b16 的上限是 17。所有新方案产生的 token 都只作为候选，并在正确 target KV cache 上重新验证。</p>
 
 <h3>1.2 B、W 和 query count</h3>
 <table><thead><tr><th>符号</th><th>含义</th><th>例子</th></tr></thead><tbody>
@@ -93,21 +93,20 @@ target 在 B 后预测 D  → B 的子节点只有 C/E，第一次不匹配
 </section>
 
 <section id="metrics">
-<h2>2. 指标与证据口径</h2>
-<p>这页最容易误读的地方，是不同百分比可能分别描述延迟、候选质量或估算吞吐。以下定义贯穿全部算法。</p>
-<table><thead><tr><th>指标</th><th>定义</th><th>如何读</th></tr></thead><tbody>
-<tr><td>TPOT</td><td>完整 decode 时间 ÷ 新生成 token 数</td><td>越低越好；<code>+14.22%</code> 表示每个 token 更慢 14.22%</td></tr>
-<tr><td>接受保留率</td><td>候选方案平均接受长度 ÷ 指定 baseline 平均接受长度</td><td>必须看清 baseline；72.09% 和 32.03% 的分母不同</td></tr>
-<tr><td>可用比例</td><td>能构造非空候选的轮次 ÷ 全部配对轮次</td><td>只表示算法有机会启动，不表示候选正确</td></tr>
-<tr><td>单位时间接受 token</td><td>接受长度 ÷（draft + build + verify）</td><td><code>-42.76%</code> 表示按配对单轮成本模型，吞吐代理下降 42.76%</td></tr>
-<tr><td>命中率</td><td>真实事件是否落入前 m 个假设</td><td>Probe A 要求路径和 bonus token 同时正确</td></tr>
+<h2>2. 实验指标与结果口径</h2>
+<table><thead><tr><th>指标</th><th>定义</th><th>结果方向</th></tr></thead><tbody>
+<tr><td>TPOT</td><td>完整 decode 时间 ÷ 新生成 token 数</td><td>越低越好；<code>+14.22%</code> 表示每个 token 的时间增加 14.22%</td></tr>
+<tr><td>接受保留率</td><td>候选方案平均接受长度 ÷ 指定对照的平均接受长度</td><td>72.09% 以同长度重算为对照；32.03% 以正常完整下一轮为对照</td></tr>
+<tr><td>可用比例</td><td>能构造非空候选的轮次 ÷ 全部配对轮次</td><td>衡量方案的覆盖范围，不衡量候选正确率</td></tr>
+<tr><td>单位时间接受 token</td><td>接受长度 ÷（draft + build + verify）</td><td><code>-42.76%</code> 表示配对单轮成本模型中的吞吐代理下降 42.76%</td></tr>
+<tr><td>命中率</td><td>真实事件落入前 m 个假设的轮次比例</td><td>Probe A 要求路径和 bonus token 同时正确</td></tr>
 <tr><td>边迁移率</td><td>换成真实 bonus 前缀后仍被 target 接受的旧边 ÷ 错误前缀下连续匹配的旧边</td><td>严格后缀实验为 <code>41/264=15.53%</code></td></tr>
 </tbody></table>
-<p class="note"><strong>证据分级：</strong>容量 roofline 和 Probe B 是硬件微基准；Probe A 是真实轨迹上的离线命中分析；Probe C 与 B384 是完整生成实测；stale multiblock 和三种回收使用不改变正式输出的 shadow 旁路，再做逐轮配对成本估算。文中把“实测 TPOT”“单轮估算”和“事后 oracle 上限”分开标注。</p>
+<p class="note"><strong>结果类型：</strong>容量 roofline 和 Probe B 是硬件微基准；Probe A 是真实轨迹上的离线命中分析；Probe C 与 B384 是完整生成实测；stale multiblock 和三种回收使用隔离的 shadow 旁路，并根据逐轮配对结果估算单位时间收益。Oracle 结果使用事后真实信息，只作为上限。</p>
 </section>
 
 <section id="code-map">
-<h2>3. 实现代码总览</h2>
+<h2>3. 代码实现概览</h2>
 <table><thead><tr><th>方向</th><th>实际新增代码</th><th>是否改正式输出路径</th></tr></thead><tbody>
 <tr><td>动态容量</td><td><code>run_capacity_roofline.py</code> 构造真实 KV/cache/query；<code>analyze_capacity_roofline.py</code> 选择 5% 平台预算</td><td>否，独立 benchmark</td></tr>
 <tr><td>stale 第二块</td><td><code>select_scored_path_at_depth()</code>、<code>zero_order_hold_target_context()</code>、<code>build_multiblock_continuation()</code>、<code>merge_tree_extension()</code></td><td>否，shadow tree</td></tr>
@@ -122,8 +121,8 @@ target 在 B 后预测 D  → B 的子节点只有 C/E，第一次不匹配
 </section>
 
 <section id="capacity">
-<h2>4. 算法 1：动态验证预算</h2>
-<h3>4.1 实现的不是“动态控制器”，而是容量测量器</h3>
+<h2>4. 动态验证预算</h2>
+<h3>4.1 容量测量实现</h3>
 <p><code>run_capacity_roofline.py</code> 为每个 batch element 建独立 <code>DynamicCache</code>，构造前缀闭合的树 visibility mask，并真实执行完整词表输出和 argmax。对每个前缀长度 <code>L</code>、batch size <code>N</code> 和预算 <code>B</code> 测 target latency。</p>
 <pre><code>输入状态 (L, N)
     │
@@ -149,16 +148,16 @@ Tmin = 该 (L,N) 下所有 B 的最低验证时间
 <tr><td>4096</td><td>B128</td><td>B32</td><td>B16</td></tr>
 </tbody></table>
 
-<h3>4.3 27.16% 的精确定义</h3>
+<h3>4.3 验证延迟收益</h3>
 <p>对 6 个前缀长度 × 3 个 batch size 的 18 个状态，分别计算</p>
 <pre><code>saving(L,N) =
   [Tverify(B256) - Tverify(Bselected)] / Tverify(B256)</code></pre>
-<p>18 个 saving 的算术平均为 <strong>27.16%</strong>，中位数 20.19%，最大 63.70%；14/18 个状态选择的预算小于 B256，3 个等于 B256，1 个选择 B384。这个数字只能写成“target verification phase 平均降时 27.16%”。</p>
-<p>端到端 B384 反例说明为什么不能把它叫作加速：B384 相对 B256 接受长度提高 2.81%，但三数据集 TPOT 宏平均反而 <strong>+0.93%</strong>（更慢）。硬件平台只给预算上界，最终仍要同时优化 acceptance 的边际收益。</p>
+<p>18 个状态的 saving 算术平均为 <strong>27.16%</strong>，中位数 20.19%，最大 63.70%；14/18 个状态选择的预算小于 B256，3 个等于 B256，1 个选择 B384。因此，容量选择在 target verification 阶段平均减少 27.16% 延迟；该结果不包含预算变化对 acceptance 和解码轮次的影响。</p>
+<p>B384 相对 B256 将接受长度提高 2.81%，但三数据集 TPOT 宏平均增加 <strong>0.93%</strong>。因此 B384 的端到端结果更慢，预算选择还需要考虑 acceptance 的边际收益，不能只依据硬件延迟平台。</p>
 </section>
 
 <section id="multiblock">
-<h2>5. 算法 2：用 stale target feature 预测第二块</h2>
+<h2>5. 基于 stale target feature 的第二块预测</h2>
 <h3>5.1 想法与具体例子</h3>
 <p>原 b16 树最多向前 16 个 draft 位置。既然 target 验证 257 和 273 queries 都约 38 ms，可以在一条深度 16 叶子后再挂 16 个节点。但第二块本应读取第一块新 token 在 target 第 <code>1/9/17/25/33</code> 层的表示；这些 feature 在验证第一块前还不存在。</p>
 <pre><code>第一块真实需要：h_t
@@ -193,18 +192,18 @@ verify_multiblock_shadow()
 hybrid_extension_acceptance()
   原 B256 路径沿用原判断，只重放新增链，隔离 BF16 shape drift</code></pre>
 
-<h3>5.3 数字到底是什么意思</h3>
-<table><thead><tr><th>数字</th><th>分子 / 分母</th><th>解释</th></tr></thead><tbody>
-<tr><td><strong>+0.013 token/round</strong></td><td>三个数据集“在线最高分分支 + stale feature”每轮额外接受数的宏平均；共观察 618 轮</td><td>是 0.013 个 token，不是 1.3%；几乎没有延长接受路径</td></tr>
-<tr><td><strong>-9.61%</strong></td><td>在原轨迹上加入第二次 draft、构树、273-query verify 后的 accepted-token/ms，相对原 DARTree 的宏平均变化</td><td>逐轮 shadow 成本估算，不是沿新轨迹重跑的 E2E TPOT</td></tr>
-<tr><td><strong>+7.937 token</strong></td><td>只在原轮已经接受满 17 token 时，事后给出真实分支和精确未来 feature，新增接受数的宏平均</td><td>oracle 上限；证明深度有价值，失败点是 feature 不可得</td></tr>
-<tr><td><strong>+8.89%</strong></td><td>真实分支、精确 feature、正确触发轮次三项未来信息都已知时的 accepted-token/ms 上限</td><td>不可部署，只是设计空间上限</td></tr>
+<h3>5.3 实验结果与成本</h3>
+<table><thead><tr><th>结果</th><th>计算口径</th><th>结论</th></tr></thead><tbody>
+<tr><td><strong>+0.013 token/round</strong></td><td>三个数据集“在线最高分分支 + stale feature”每轮额外接受数的宏平均；共观察 618 轮</td><td>平均每轮仅增加 0.013 个 token，接受路径基本没有延长</td></tr>
+<tr><td><strong>-9.61%</strong></td><td>在原轨迹上加入第二次 draft、构树、273-query verify 后的 accepted-token/ms，相对原 DARTree 的宏平均变化</td><td>Shadow 单轮成本估算显示单位时间收益下降</td></tr>
+<tr><td><strong>+7.937 token</strong></td><td>只在原轮已经接受满 17 token 时，事后给出真实分支和精确未来 feature，新增接受数的宏平均</td><td>深预测本身有价值，主要限制是未来 feature 不可得</td></tr>
+<tr><td><strong>+8.89%</strong></td><td>真实分支、精确 feature、正确触发轮次三项未来信息都已知时的 accepted-token/ms 上限</td><td>事后 oracle 上限，不是可部署收益</td></tr>
 </tbody></table>
 <p>273-query verify 与原 B256 verify 基本同速，但第二次 draft 约 5.7 ms、构造/合并约 4.8 ms，额外约 10.5 ms 并不免费。因此该实现否定的是“复制旧 feature 再递归跑同一 b16”这一具体算法，而不是更长预测本身。</p>
 </section>
 
 <section id="prefetch">
-<h2>6. 算法 3：第 34 层就绪后的跨卡预取</h2>
+<h2>6. 第 34 层就绪后的跨卡预取</h2>
 <h3>6.1 设想的双卡流程</h3>
 <pre><code>GPU 0：target 第 1–34 层
            │ 五路 Domino feature 全部就绪
@@ -236,7 +235,7 @@ GPU 1 批量预跑 m 份 drafter
 <tr><td>top-4</td><td>37.85%</td><td>45.61%</td></tr>
 <tr><td>top-8</td><td><strong>48.17%</strong></td><td>56.01%</td></tr>
 </tbody></table>
-<p><strong>48.17%</strong> 的分母是 1,173 个真实解码轮次；它表示约一半轮次的真实“路径 + bonus”落入 top-8。预设门槛是 top-8 ≥90%。而最值得预取的长接受轮次（τ=13–17）top-8 只有 32.73%，因此扩大 batch 也难解决。</p>
+<p>在 1,173 个真实解码轮次中，真实“路径 + bonus”落入 top-8 的比例为 <strong>48.17%</strong>，低于预设的 90% 门槛。长接受轮次（τ=13–17）的 top-8 命中率进一步降到 32.73%，因此增加假设 batch 不能解决状态预测误差。</p>
 
 <h3>6.3 Probe B：硬件窗口</h3>
 <p>代码把真实 target tree forward 在第 34 层后切开计时，并单独微基准 batch 1/2/4/8 的“DFlash 主干 + lm_head + top-64”。</p>
@@ -262,7 +261,7 @@ extrapolate = [h1, h9, h17, h25, 2h25-h17]</code></pre>
 </section>
 
 <section id="rejected-state">
-<h2>7. 算法 4：错误前缀 target state 的朴素回收</h2>
+<h2>7. 错误前缀 target state 的朴素回收</h2>
 <h3>7.1 具体例子</h3>
 <pre><code>真实前缀 P，草稿走了错误词元 x
 target 已经并行算出：
@@ -294,18 +293,18 @@ DDTree best-first search → B64 回收树
     ▼
 与同一 P,b 的正常下一轮 DARTree 配对</code></pre>
 
-<h3>7.3 17.28% 和 -57.14% 的分母</h3>
+<h3>7.3 回收候选质量与性能</h3>
 <p>283 个可配对轮次中，最强混合树在 237 轮非空，因此可用比例 <code>237/283=83.75%</code>。只看这 237 轮：</p>
 <table><thead><tr><th>路径</th><th>平均总接受</th><th>其中 bonus 之外</th></tr></thead><tbody>
 <tr><td>正常下一轮完整 DARTree</td><td>8.422</td><td>—</td></tr>
 <tr><td>错误状态混合回收</td><td>1.456</td><td>0.456</td></tr>
 </tbody></table>
-<p>因此接受保留率是 <code>1.456/8.422=17.28%</code>。1.456 中的 1 是已经由 target 产生的 bonus，旧状态真正额外贡献只有 0.456 token。策略在有树时用回收、无树时回退正常 DARTree；按实测 build + 38.39 ms verify 做逐轮成本投影，accepted-token/ms 相对全正常 DARTree 为 <strong>-57.14%</strong>。它不是完整回收轨迹的 E2E TPOT，但接收长度相差近六倍，调度优化无法逆转。</p>
+<p>回收方案的接受保留率为 <code>1.456/8.422=17.28%</code>。1.456 中的 1 是已经由 target 产生的 bonus，旧状态额外贡献 0.456 token。有树时使用回收、无树时回退正常 DARTree，并按实测 build + 38.39 ms verify 做逐轮成本投影，accepted-token/ms 相对正常 DARTree 下降 <strong>57.14%</strong>。该结果是单轮配对估算；候选接受长度已比正常路径低近六倍。</p>
 </section>
 
 <section id="bonus-reset">
-<h2>8. 算法 5：用 bonus token 重置 Domino GRU</h2>
-<h3>8.1 与错误 target state 回收有什么不同</h3>
+<h2>8. Bonus token 重置 Domino GRU</h2>
+<h3>8.1 方法区别</h3>
 <p>这里不再复用因果前缀错误的 target hidden state，而是复用 DFlash 一次并行算出的块位置 <code>z_i</code>。Domino 本来就用 GRU 为每条树分支注入具体前缀，因此可以丢弃错误分支 GRU state，用真实 bonus 重置。</p>
 <pre><code>例：b16 当前轮在深度 d=5 停止
 已接受：P → A → B → C → D → E
@@ -336,23 +335,23 @@ reset_hidden = GRU(F, stop_hidden)
 <li><code>build_fresh_horizon_tree()</code> 在正确 bonus 前缀上重新跑 DFlash，但裁成相同剩余长度，作为质量上限。</li>
 </ul>
 
-<h3>8.3 三个百分比使用三个不同分母</h3>
+<h3>8.3 重置后的候选质量与性能</h3>
 <p>283 个配对轮次中，228 轮还有至少一个未消费位置，因此可用比例 <code>228/283=80.57%</code>，平均只剩 9.05 个位置。</p>
 <table><thead><tr><th>方案</th><th>平均总接受</th><th>bonus 外接受</th><th>平均 proposal+verify</th></tr></thead><tbody>
 <tr><td>正常下一轮完整 DARTree</td><td>8.215</td><td>—</td><td>51.285 ms</td></tr>
 <tr><td>reset DARTree</td><td>2.632</td><td>1.632</td><td>44.727 ms</td></tr>
 <tr><td>正确前缀同长度重算</td><td>3.263</td><td>2.263</td><td>50.485 ms</td></tr>
 </tbody></table>
-<ul>
-<li><strong>72.09%</strong>：<code>1.632 / 2.263</code>。分母是“正确前缀上重新跑 DFlash、但裁成同样 9.05 个位置”的 bonus 外接受数，只衡量旧 <code>z_i</code> + GRU reset 的质量。</li>
-<li><strong>32.03%</strong>：<code>2.632 / 8.215</code>。分母是正常下一轮完整 b16 DARTree 的总接受数，衡量它能否直接替代下一轮。</li>
-<li><strong>-42.76%</strong>：有剩余位置时用 reset DARTree，否则正常回退的逐轮 accepted-token/ms 变化。虽然每轮省 6.56 ms，但接受长度少 68%，仍要支付约 38 ms target verify。</li>
-</ul>
+<table><thead><tr><th>结果</th><th>计算</th><th>结论</th></tr></thead><tbody>
+<tr><td><strong>72.09%</strong></td><td><code>1.632 / 2.263</code>；对照是在正确前缀上重新运行 DFlash、但裁成相同 9.05 个位置</td><td>旧 <code>z_i</code> 与 GRU reset 保留了同长度重算 72.09% 的 bonus 外接受能力</td></tr>
+<tr><td><strong>32.03%</strong></td><td><code>2.632 / 8.215</code>；对照是正常下一轮完整 b16 DARTree</td><td>重置树只能保留正常下一轮 32.03% 的总接受长度</td></tr>
+<tr><td><strong>-42.76%</strong></td><td>有剩余位置时使用 reset DARTree，否则正常回退的逐轮 accepted-token/ms 变化</td><td>每轮虽节省 6.56 ms，但接受长度减少 68%，单位时间收益下降</td></tr>
+</tbody></table>
 <p>决定性对照是“同长度重算”本身也只有正常下一轮的 39.72%，单位时间仍为 -42.42%。即使训练把 72.09% 提到 100%，当前块剩余 horizon 太短，仍无法直接替代下一轮，因此没有启动 50.8M 参数修正器训练。</p>
 </section>
 
 <section id="suffix">
-<h2>9. 算法 6：严格连续匹配后缀回收</h2>
+<h2>9. 严格连续匹配后缀回收</h2>
 <h3>9.1 算法只保留原树中真实存在的连续边</h3>
 <pre><code>真实前缀 P，target bonus=b
 原错误分支：P → x → a → c → d
@@ -368,10 +367,10 @@ target 在 P,x,a,c 后预测 e
 然后在正确 P,b cache 上重新验证 a,c</code></pre>
 <p><code>build_verified_suffix_recycling_tree()</code> 对停止节点的每个被拒绝子节点循环执行：读取该错误节点的 target argmax，用 <code>child_map[(parent, token)]</code> 查询原树是否存在完全相同的边；存在才加入前缀树并继续，否则立即停止。多条链只合并公共前缀，不合成新边。</p>
 
-<h3>9.2 四个数字对应四层筛选</h3>
-<table><thead><tr><th>数字</th><th>计算</th><th>含义</th></tr></thead><tbody>
+<h3>9.2 可用率、迁移率与性能</h3>
+<table><thead><tr><th>结果</th><th>计算</th><th>结论</th></tr></thead><tbody>
 <tr><td><strong>32.51%</strong></td><td><code>92/283</code> 个配对轮次至少有一条连续匹配后缀</td><td>算法有候选可用，不代表换前缀后仍正确</td></tr>
-<tr><td><strong>15.53%</strong></td><td>92 轮里，错误前缀下共有 264 条连续匹配边；换到真实 bonus 前缀后只接受 41 条，<code>41/264</code></td><td>真正的 wrong-prefix → true-prefix 边迁移率</td></tr>
+<tr><td><strong>15.53%</strong></td><td>92 轮里，错误前缀下共有 264 条连续匹配边；换到真实 bonus 前缀后只接受 41 条，<code>41/264</code></td><td>wrong-prefix → true-prefix 的边迁移率</td></tr>
 <tr><td><strong>17.10%</strong></td><td>可用轮次回收总接受 1.446 ÷ 正常下一轮 8.457</td><td>相对正常 DARTree 的接受保留率</td></tr>
 <tr><td><strong>-19.15%</strong></td><td>92 轮用回收、191 轮正常回退的 paired accepted-token/ms 变化</td><td>无条件部署会变慢</td></tr>
 </tbody></table>
@@ -379,8 +378,8 @@ target 在 P,x,a,c 后预测 e
 </section>
 
 <section id="comparison">
-<h2>10. 结果与证据总表</h2>
-<table><thead><tr><th>算法 / probe</th><th>真正比较的 baseline</th><th>主数字</th><th>证据类型</th><th>判断</th></tr></thead><tbody>
+<h2>10. 实验结果总表</h2>
+<table><thead><tr><th>算法 / probe</th><th>对照</th><th>关键结果</th><th>结果类型</th><th>判断</th></tr></thead><tbody>
 <tr><td>动态预算 roofline</td><td>每个 (L,N) 固定 B256 的 target verify</td><td>verify latency 平均 -27.16%</td><td>126 点硬件微基准</td><td>继续做真实 batch 控制器</td></tr>
 <tr><td>B384 在线补充</td><td>同样本 B256/W48</td><td>accept +2.81%，TPOT +0.93%</td><td>完整生成 paired 实测</td><td>B384 不采用</td></tr>
 <tr><td>stale 第二块</td><td>原 B256 单块</td><td>+0.013 token/round；accepted/ms -9.61%</td><td>shadow + 单轮投影</td><td>停止复制旧 feature</td></tr>
@@ -411,7 +410,7 @@ target 在 P,x,a,c 后预测 e
         ▼
 比较固定 B64 / 固定 B256 / 固定总 query / 动态分配
 指标：吞吐、TPOT、P95 latency、acceptance、公平性</code></pre>
-<p>这是 27.16% roofline 结果真正缺少的端到端实现。控制器必须同时考虑前缀长度、batch size、构树时间和预算带来的 acceptance 边际收益，不能只选平台区最大的 B。</p>
+<p>Roofline 已证明容量随前缀长度和 batch size 变化；下一步需要把该规律接入真实 ragged batch。控制器必须同时考虑构树时间和预算带来的 acceptance 边际收益，而不是只选择平台区最大的 B。</p>
 
 <h3>11.2 若允许训练：原生多 horizon drafter</h3>
 <p>联合训练 block 8/16/24/32 或不同 mask ratio，让一次 forward 直接覆盖更远位置，避免 stale second block 的第二次 draft 和旧 feature。它也能解决 bonus reset 的核心限制：当前块停止后平均只剩 9.05 个位置。</p>

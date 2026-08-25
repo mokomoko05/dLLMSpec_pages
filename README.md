@@ -12,4 +12,7 @@
 - [DSpark train smoke](https://github.com/mokomoko05/dLLMSpec/tree/main/agentWorkSpace/20260816_154529_dspark_speculators_train_smoke)
 - [DSpark Qwen3-8B 5K pilot](https://github.com/mokomoko05/dLLMSpec/tree/main/agentWorkSpace/20260816_181530_dspark_speculators_qwen3_8b_5k_pilot)
 - [DSpark Qwen3-8B 30K × 2 epochs](https://github.com/mokomoko05/dLLMSpec/tree/main/agentWorkSpace/20260816_210837_dspark_speculators_qwen3_8b_30k_2ep)
+- [Qwen3.8-27B DFlash2 / DSpark reproduction](https://github.com/mokomoko05/dLLMSpec/tree/main/agentWorkSpace/20260822_qwen38_27b_dflash2_dspark_reproduction)
+- [DARTree Qwen3-4B reproduction](https://github.com/mokomoko05/dLLMSpec/tree/main/agentWorkSpace/20260823_dartree_reproduction)
+- [Elastic DARTree research](https://github.com/mokomoko05/dLLMSpec/tree/main/agentWorkSpace/20260825_elastic_dartree_research)
 - [Papers and reproduction workspace](https://github.com/mokomoko05/dLLMSpec)

@@ -727,7 +727,8 @@ h1 {
 }
 
 .result-table {
-  width: 100%;
+  width: max-content;
+  min-width: 100%;
   border-collapse: collapse;
   white-space: nowrap;
   font-size: 0.64rem;
@@ -736,7 +737,7 @@ h1 {
 
 .result-table th,
 .result-table td {
-  padding: 5px 7px;
+  padding: 6px 8px;
   border-right: 1px solid #e2e5e8;
   border-bottom: 1px solid #e2e5e8;
   text-align: right;
@@ -744,18 +745,61 @@ h1 {
 
 .result-table th:first-child,
 .result-table td:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
   text-align: left;
+  background: inherit;
 }
 
 .result-table thead th {
   position: sticky;
   top: 0;
+  z-index: 2;
   color: #4d5965;
   background: #f2f4f5;
 }
 
 .result-table tbody tr:nth-child(even) {
   background: #fafbfb;
+}
+
+.result-table thead th:first-child {
+  z-index: 3;
+  background: #f2f4f5;
+}
+
+.row-label {
+  font-weight: 700;
+}
+
+.metric-pair {
+  display: grid;
+  gap: 3px;
+  min-width: 102px;
+  text-align: left;
+}
+
+.metric-pair span {
+  display: grid;
+  grid-template-columns: 27px 1fr;
+  gap: 4px;
+}
+
+.metric-pair span + span {
+  padding-top: 3px;
+  border-top: 1px dotted #d7dce1;
+  color: var(--muted);
+}
+
+.metric-pair b {
+  color: var(--blue);
+  font-size: 0.56rem;
+  letter-spacing: 0.02em;
+}
+
+.metric-pair span + span b {
+  color: #7b6250;
 }
 
 .result-note {

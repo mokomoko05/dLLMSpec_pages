@@ -239,7 +239,8 @@ const papers = [
     baselines: ["AR", "DFlash", "DDTree", "CaDDTree", "Domino"],
     inherited: "DDTree tree builder + Domino correction",
     reproduced: false,
-    local: "尚无 DominoTree 官方 harness 的本地正式复现。复现时需保留不同 harness 各自的 AR 归一化口径。",
+    reproductionStatus: "运行中",
+    local: "Qwen3-4B Table 1 的 8 数据集 × 3 温度、共 24 点正式矩阵已启动。完成点通过独立 SUCCESS 验收后才计入结果；矩阵完整前不标记为已复现。",
     pdf: "../../papers/DominoTree_Conditional_Tree-Structured_Drafting_with_Domino_for_Speculative_Decoding_arXiv-2607.08642v2.pdf",
     arxiv: "https://arxiv.org/abs/2607.08642",
     repo: "https://github.com/slin-zhq/Domino-Tree",
@@ -296,14 +297,27 @@ const papers = [
     metrics: "speedup、τ、round time、tree depth distribution",
     baselines: ["AR", "DFlash", "DDTree", "Domino"],
     inherited: "DFlash + DDTree + Domino correction head",
-    reproduced: false,
-    local: "尚无正式本地复现。本地 DSpark dynamic-tree 与其实现、预算和硬件均不同。",
+    reproduced: true,
+    local: "Qwen3-4B fixed/pruned、7 数据集、temperature 0/1 共 28 个正式结果已完成。pruned 宏平均：T=0 为 7.55× / τ=9.81（论文 6.99× / 9.81），T=1 为 6.36× / 8.44（论文 5.93× / 8.48）。",
     pdf: "../../papers/DARTree_Speculative_Diffusion_Decoding_with_Autoregressive_Draft_Trees_arXiv-2608.13524v1.pdf",
     arxiv: "https://arxiv.org/abs/2608.13524",
     repo: "https://github.com/VILA-Lab/DARTree",
-    report: ""
+    report: "https://github.com/mokomoko05/dLLMSpec/tree/main/agentWorkSpace/20260823_dartree_reproduction"
   }
 ];
+
+for (const paper of papers) {
+  const replacement = window.paperReproductionTables?.[paper.id];
+  if (!replacement) continue;
+  const existingSections = paper.reproduction?.sections || [];
+  const appendedSections = Number.isInteger(replacement.appendExistingSectionsFrom)
+    ? existingSections.slice(replacement.appendExistingSectionsFrom)
+    : [];
+  paper.reproduction = {
+    ...replacement,
+    sections: [...replacement.sections, ...appendedSections]
+  };
+}
 
 const positions = {
   eagle3: [28, 112],
@@ -456,7 +470,7 @@ function renderNodes() {
       <span class="node-layout">
         <span class="node-thumb"><img src="${paper.asset}" alt="" loading="lazy"></span>
         <span class="node-copy">
-          <span class="node-meta"><time datetime="${paper.date}">${paper.date.slice(0, 7)}</time><span class="node-status${paper.reproduced ? "" : " pending"}">${paper.reproduced ? "已复现" : "未复现"}</span></span>
+          <span class="node-meta"><time datetime="${paper.date}">${paper.date.slice(0, 7)}</time><span class="node-status${paper.reproduced ? "" : " pending"}">${paper.reproductionStatus || (paper.reproduced ? "已复现" : "未复现")}</span></span>
           <h3>${paper.name}</h3>
           <span class="node-training ${paper.training.label === "training-free" ? "free" : "required"}">${paper.training.label}</span>
           <span class="node-kind">${paper.kind}</span>
@@ -525,16 +539,25 @@ function renderLinks(paper) {
 }
 
 function artifactsFor(paper) {
-  const artifacts = [...paper.figures];
+  const artifacts = paper.figures.map((figure) => figure.id === "table1" && paper.reproduction
+    ? { ...figure, label: "论文原表图" }
+    : figure);
   if (paper.reproduction) {
-    artifacts.push({
-      id: "local-reproduction",
-      label: "本地复现结果",
+    artifacts.unshift({
+      id: "paper-local-comparison",
+      label: "Table 1 · 论文 / 本地",
       type: "results",
       summary: paper.reproduction.summary
     });
   }
   return artifacts;
+}
+
+function renderResultCell(cell, rowHeader) {
+  if (cell && typeof cell === "object" && "local" in cell && "paper" in cell) {
+    return `<div class="metric-pair"><span><b>本地</b>${cell.local}</span><span><b>论文</b>${cell.paper}</span></div>`;
+  }
+  return rowHeader ? `<span class="row-label">${cell}</span>` : cell;
 }
 
 function renderResultTables(reproduction) {
@@ -545,7 +568,7 @@ function renderResultTables(reproduction) {
     <h3>${section.title}</h3>
     <div class="result-table-wrap"><table class="result-table">
       <thead><tr>${section.headers.map((header) => `<th scope="col">${header}</th>`).join("")}</tr></thead>
-      <tbody>${section.rows.map((row) => `<tr>${row.map((cell, index) => index === 0 ? `<th scope="row">${cell}</th>` : `<td>${cell}</td>`).join("")}</tr>`).join("")}</tbody>
+      <tbody>${section.rows.map((row) => `<tr>${row.map((cell, index) => index === 0 ? `<th scope="row">${renderResultCell(cell, true)}</th>` : `<td>${renderResultCell(cell, false)}</td>`).join("")}</tr>`).join("")}</tbody>
     </table></div>
     ${section.note ? `<p class="result-note">${section.note}</p>` : ""}
   </section>`).join("");
@@ -609,7 +632,7 @@ function selectPaper(id, scroll) {
   selectedPaper = id;
   updateMethodSummary(paper);
   document.querySelectorAll(".paper-node").forEach((node) => node.classList.toggle("active", node.dataset.id === id));
-  previewCopy.innerHTML = `<span class="preview-date">${paper.date} · ${paper.reproduced ? "本地已复现" : "本地未复现"}</span>
+  previewCopy.innerHTML = `<span class="preview-date">${paper.date} · ${paper.reproductionStatus ? `本地${paper.reproductionStatus}` : (paper.reproduced ? "本地已复现" : "本地未复现")}</span>
     <h2>${paper.name}</h2>
     <p class="preview-paper-title">${paper.title}</p>
     <div class="preview-section"><h3>方法</h3><p>${paper.summary}</p><p class="training-callout"><strong>${paper.training.label}</strong>：${paper.training.note}</p></div>

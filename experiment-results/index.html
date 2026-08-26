@@ -21,18 +21,21 @@
     <div class="metrics">
       <article><strong>4.8415×</strong><span>本地 32 点 speedup 几何平均</span></article>
       <article><strong>4.7490×</strong><span>论文对应参考值</span></article>
-      <article><strong>5.890</strong><span>本地 per-step acceptance</span></article>
+      <article><strong>6.471</strong><span>本地 per-sample acceptance</span></article>
+      <article><strong>5.890</strong><span>本地 per-step acceptance（micro）</span></article>
     </div>
     <table>
-      <thead><tr><th>模型</th><th>温度</th><th>点数</th><th>本地 speedup</th><th>论文参考</th><th>Acceptance 差值</th></tr></thead>
+      <thead><tr><th>模型</th><th>温度</th><th>点数</th><th>本地 speedup</th><th>论文 speedup</th><th>本地 per-step τ</th><th>本地 per-sample τ</th><th>论文 per-sample τ</th></tr></thead>
       <tbody>
-        <tr><td>Qwen3-4B</td><td>0</td><td>8</td><td>5.3796×</td><td>5.1937×</td><td>−0.436</td></tr>
-        <tr><td>Qwen3-4B</td><td>1</td><td>8</td><td>4.3836×</td><td>4.4048×</td><td>−0.899</td></tr>
-        <tr><td>Qwen3-8B</td><td>0</td><td>8</td><td>5.4304×</td><td>5.2027×</td><td>−0.411</td></tr>
-        <tr><td>Qwen3-8B</td><td>1</td><td>8</td><td>4.2905×</td><td>4.2735×</td><td>−0.849</td></tr>
+        <tr><td>Qwen3-4B</td><td>0</td><td>8</td><td>5.3796×</td><td>5.1937×</td><td>6.640</td><td>7.071</td><td>7.076</td></tr>
+        <tr><td>Qwen3-4B</td><td>1</td><td>8</td><td>4.3836×</td><td>4.4048×</td><td>5.099</td><td>5.884</td><td>5.998</td></tr>
+        <tr><td>Qwen3-8B</td><td>0</td><td>8</td><td>5.4304×</td><td>5.2027×</td><td>6.763</td><td>7.175</td><td>7.174</td></tr>
+        <tr><td>Qwen3-8B</td><td>1</td><td>8</td><td>4.2905×</td><td>4.2735×</td><td>5.058</td><td>5.755</td><td>5.906</td></tr>
       </tbody>
     </table>
-    <aside><strong>口径限制：</strong>论文使用 H200，本地使用 A100 80GB PCIe + SDPA，因此论文数值只作趋势对照。整体 speedup 略高约 1.95%，但 acceptance 低 0.649 token/step，不能解释为 draft quality 更高。</aside>
+    <aside><strong>2026-08-26 口径修订：</strong>旧版页面错误地用本地 per-step acceptance 对比论文 per-sample τ，因而给出了偏大的负差。修正后，本地整体 per-sample τ 为 6.471，论文为 6.538，差值是 −0.067，而不是 −0.649。</aside>
+    <p><strong>Per-step</strong> 把所有样本的 verification rounds 合并后求平均，round 更多的长样本权重更大；<strong>per-sample</strong> 先在每个样本内求平均，再对样本等权平均。以 Qwen3-4B、GSM8K、T=0 为例，同一结果的两个数分别是 9.48 和 10.04。论文 Table 1 对照使用 per-sample，per-step 作为独立 micro 指标保留。</p>
+    <aside><strong>硬件限制：</strong>论文使用 H200，本地使用 A100 80GB PCIe + SDPA，因此 speedup 仍然只作趋势对照，不是严格同硬件复现。</aside>
     <p>初次 LiveCodeBench 下载失败的两个目录保留为 <code>FAILED</code>；本地 snapshot fallback 修复后的成功运行才进入正式汇总。</p>
   </section>
 

@@ -156,17 +156,21 @@ const papers = [
     baselines: ["AR", "EAGLE-3", "DFlash", "DART", "FR-Spec"],
     inherited: "DFlash-style backbone",
     reproduced: true,
-    local: "正式矩阵 32/32 点完成。全部点 speedup 几何平均 4.8415×（论文参考 4.7490×）；本地 per-step acceptance 5.890（论文 6.538）。",
+    local: "正式矩阵 32/32 点完成。全部点 speedup 几何平均 4.8415×（论文参考 4.7490×）；同口径 per-sample acceptance 为 6.471（论文 6.538），另报告 per-step micro average 5.890。",
     reproduction: {
       summary: "完整 32/32 点已通过解析并写入 SUCCESS。Domino 与 AR baseline 在同一 reviewer 进程、模型、样本、参数和 SDPA backend 中测量；论文 H200 与本地 A100 80GB 不是严格同硬件。",
-      warning: "两次初始 LiveCodeBench 下载失败目录保留 FAILED；修复后的本地 snapshot 运行才进入汇总。论文对照仅表示趋势，不是同硬件复现。",
+      warning: "2026-08-26 修正统计口径：旧版页面曾用本地 per-step acceptance 对比论文 per-sample τ，原先的大负差无效。两次初始 LiveCodeBench 下载失败目录仍保留 FAILED；论文与本地 speedup 不是同硬件复现。",
       sections: [
-        { title: "完整矩阵 · 按模型与温度聚合", headers: ["模型", "温度", "点数", "本地 speedup", "论文参考", "相对论文", "本地 τ", "论文 τ"], rows: [
-          ["Qwen3-4B", "0", "8/8", "5.3796×", "5.1937×", "+3.58%", "6.640", "7.076"],
-          ["Qwen3-4B", "1", "8/8", "4.3836×", "4.4048×", "−0.48%", "5.099", "5.998"],
-          ["Qwen3-8B", "0", "8/8", "5.4304×", "5.2027×", "+4.38%", "6.763", "7.174"],
-          ["Qwen3-8B", "1", "8/8", "4.2905×", "4.2735×", "+0.40%", "5.058", "5.906"]
-        ], note: "32 点整体 speedup 几何平均 4.8415×，论文参考 4.7490×；整体本地 acceptance 5.890，论文 6.538。" }
+        { title: "完整矩阵 · 按模型与温度聚合", headers: ["模型", "温度", "点数", "本地 speedup", "论文 speedup", "本地 per-step τ", "本地 per-sample τ", "论文 per-sample τ"], rows: [
+          ["Qwen3-4B", "0", "8/8", "5.3796×", "5.1937×", "6.640", "7.071", "7.076"],
+          ["Qwen3-4B", "1", "8/8", "4.3836×", "4.4048×", "5.099", "5.884", "5.998"],
+          ["Qwen3-8B", "0", "8/8", "5.4304×", "5.2027×", "6.763", "7.175", "7.174"],
+          ["Qwen3-8B", "1", "8/8", "4.2905×", "4.2735×", "5.058", "5.755", "5.906"]
+        ], note: "32 点本地 per-sample τ 为 6.471，论文为 6.538，差 −0.067；本地 per-step micro average 为 5.890，不能直接与论文 per-sample τ 相减。" },
+        { title: "Acceptance 统计口径", headers: ["指标", "计算方式", "权重与用途"], rows: [
+          ["Per-step", "合并全部样本的 verification rounds 后求均值", "每个 round 等权；长生成和低 acceptance 样本权重更大"],
+          ["Per-sample", "先对每个样本内部的 rounds 求均值，再对样本求均值", "每个样本等权；用于本页与论文 Table 1 的 τ 对照"]
+        ], note: "Qwen3-4B、GSM8K、T=0 的同一份本地结果：per-step 9.48，per-sample 10.04。DARTree 内 Domino baseline 为 9.4790 / 10.0403，说明实现结果一致。" }
       ]
     },
     pdf: "../../papers/Domino_Decoupling_Causal_Modeling_from_Autoregressive_Drafting_in_Speculative_Decoding_arXiv-2605.29707v1.pdf",

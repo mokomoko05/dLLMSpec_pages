@@ -242,13 +242,13 @@ const papers = [
     metrics: "speedup、τ、paired-bootstrap TPS、builder latency",
     baselines: ["AR", "DFlash", "DDTree", "CaDDTree", "Domino"],
     inherited: "DDTree tree builder + Domino correction",
-    reproduced: false,
-    reproductionStatus: "运行中",
-    local: "Qwen3-4B Table 1 的 8 数据集 × 3 温度、共 24 点正式矩阵已启动。完成点通过独立 SUCCESS 验收后才计入结果；矩阵完整前不标记为已复现。",
+    reproduced: true,
+    reproductionStatus: "24/24 完成",
+    local: "Qwen3-4B Table 1 的 8 数据集 × 3 温度、共 24 点已完成。τ 与论文宏平均相差 −0.36%（T=0）、−0.50%（T=0.5）、+0.89%（T=1）；本地 A100 speedup 高于论文是硬件与 harness 差异，不能视为同硬件性能提升。",
     pdf: "../../papers/DominoTree_Conditional_Tree-Structured_Drafting_with_Domino_for_Speculative_Decoding_arXiv-2607.08642v2.pdf",
     arxiv: "https://arxiv.org/abs/2607.08642",
     repo: "https://github.com/slin-zhq/Domino-Tree",
-    report: ""
+    report: "https://github.com/mokomoko05/dLLMSpec/tree/main/agentWorkSpace/20260826_010458_dominotree_qwen3_4b_table1_reproduction"
   },
   {
     id: "xpress",

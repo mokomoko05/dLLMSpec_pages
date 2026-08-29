@@ -377,6 +377,7 @@ function escapeSummary(value) {
 
 function inlineSummary(value) {
   return escapeSummary(value)
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>')
     .replace(/`([^`]+)`/g, "<code>$1</code>")
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
     .replace(/\*([^*]+)\*/g, "<em>$1</em>");
@@ -454,10 +455,11 @@ function methodSummaryFor(paper) {
 
 function updateMethodSummary(paper) {
   if (!methodSummaryTitle || !methodSummaryTraining || !methodSummaryContent) return;
-  methodSummaryTitle.textContent = `${paper.name}：原文摘录与方法解释`;
+  methodSummaryTitle.textContent = `${paper.name}：计算流程、张量形状与代码解释`;
   methodSummaryTraining.textContent = paper.training.label;
   methodSummaryTraining.className = `summary-training training-key ${paper.training.label === "training-free" ? "training-key-free" : "training-key-required"}`;
   methodSummaryContent.innerHTML = `<p class="summary-training-note"><strong>${paper.training.label}</strong>：${paper.training.note}</p>${methodSummaryFor(paper)}`;
+  if (window.MathJax?.typesetPromise) window.MathJax.typesetPromise([methodSummaryContent]);
 }
 
 function incomingNames(id) {

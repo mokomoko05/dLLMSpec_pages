@@ -6,6 +6,8 @@
     <meta name="description" content="EAGLE-3、DFlash 及后续推测解码方法的紧凑依赖图、论文主结果表与本地复现摘要。">
     <title>推测解码方法依赖图</title>
     <link rel="stylesheet" href="styles.css">
+    <script>window.MathJax={tex:{inlineMath:[["$","$"],["\\(","\\)"]]},options:{skipHtmlTags:["script","noscript","style","textarea","pre","code"]}};</script>
+    <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
   </head>
   <body>
     <main class="workspace">
@@ -17,7 +19,8 @@
         <div class="header-actions">
           <p class="header-note">虚线表示直接方法继承，点线表示核心对比或共享基础。点击节点，在下方统一窗口切换方法图、代表性实验表图与本地复现明细。</p>
           <a class="summary-link" href="../">← 返回内容目录</a>
-          <a class="summary-link" href="#method-summary">点击方法卡片查看原文摘要 · 翻译 · 训练属性 ↓</a>
+          <a class="summary-link" href="#method-summary">点击方法卡片查看计算流程 · 张量形状 · 代码证据 ↓</a>
+          <a class="summary-link" href="../dflash-suffix-reuse/">DFlash 后缀复用可行性研究 →</a>
         </div>
       </header>
 
@@ -63,7 +66,7 @@
         <div class="method-summary-heading">
           <div>
             <p class="kicker">PAPER SUMMARY · 点击方法卡片更新</p>
-            <h2 id="method-summary-title">DFlash：原文摘录与方法解释</h2>
+            <h2 id="method-summary-title">DFlash：计算流程与代码解释</h2>
           </div>
           <span id="method-summary-training" class="summary-training training-key training-key-required">training</span>
         </div>

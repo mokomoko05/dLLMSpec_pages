@@ -410,6 +410,11 @@ function renderSummaryMarkdown(markdown) {
       html += `<h3>${inlineSummary(heading[1])}</h3>`;
       continue;
     }
+    if (line.startsWith("> $$") && line.endsWith("$$")) {
+      flush();
+      html += `<div class="summary-equation">${escapeSummary(line.slice(2))}</div>`;
+      continue;
+    }
     if (line.startsWith("> ")) {
       flush();
       html += `<blockquote>${inlineSummary(line.slice(2))}</blockquote>`;
@@ -458,7 +463,8 @@ function updateMethodSummary(paper) {
   methodSummaryTitle.textContent = `${paper.name}：计算流程、张量形状与代码解释`;
   methodSummaryTraining.textContent = paper.training.label;
   methodSummaryTraining.className = `summary-training training-key ${paper.training.label === "training-free" ? "training-key-free" : "training-key-required"}`;
-  methodSummaryContent.innerHTML = `<p class="summary-training-note"><strong>${paper.training.label}</strong>：${paper.training.note}</p>${methodSummaryFor(paper)}`;
+  const notation = `<p class="summary-notation"><strong>统一张量记号：</strong>\(N\) 是同时处理的样本数（batch size），\(T\) 是已经确认的上下文长度，\(H\) 是每个 token 的 hidden-state 宽度，\(V\) 是词表大小，\(B\) 是并行 block 长度或最大 draft 深度，\(R\) 是低秩通道宽度。形如 \([N,B,V]\) 的三个轴依次表示样本、位置和词表分数。</p>`;
+  methodSummaryContent.innerHTML = `<p class="summary-training-note"><strong>${paper.training.label}</strong>：${paper.training.note}</p>${notation}${methodSummaryFor(paper)}`;
   if (window.MathJax?.typesetPromise) window.MathJax.typesetPromise([methodSummaryContent]);
 }
 

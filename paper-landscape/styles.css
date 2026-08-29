@@ -506,6 +506,17 @@ h1 {
   background: #f1f6f8;
 }
 
+#method-summary-content .summary-equation {
+  margin: 16px 0;
+  padding: 14px 16px;
+  overflow-x: auto;
+  border-left: 4px solid var(--blue);
+  color: #273746;
+  background: #f1f6f8;
+  font-size: 1rem;
+  text-align: center;
+}
+
 #method-summary-content code {
   padding: 2px 5px;
   border-radius: 3px;
@@ -537,6 +548,15 @@ h1 {
   padding: 10px 12px;
   border-left: 3px solid var(--blue);
   background: #f3f7f8;
+}
+
+.summary-notation {
+  padding: 10px 12px;
+  border: 1px solid #d8e0e4;
+  border-radius: 5px;
+  color: #43505d;
+  background: #fafcfc;
+  font-size: .9rem;
 }
 
 .fact-list {

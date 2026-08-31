@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="DFlash 前一位置 hidden-state refinement head 的结构、训练数据流、loss、4×A100 分阶段训练、真实 acceptance 评测与 thinking 数据错配诊断。">
+    <title>DFlash 前一位置 Hidden Refiner 实验</title>
+    <link rel="stylesheet" href="styles.css">
+    <script>window.MathJax={tex:{inlineMath:[["$","$"],["\\(","\\)"]]},options:{skipHtmlTags:["script","noscript","style","textarea","pre","code"]}};</script>
+    <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+  </head>
+  <body>
+    <nav class="top-nav" aria-label="站点导航">
+      <a href="../">← 内容目录</a>
+      <span>dLLMSpec 实验报告</span>
+    </nav>
+
+    <main>
+      <article>
+        <header class="article-header">
+          <h1>DFlash 前一位置 Hidden Refiner 实验</h1>
+          <p class="subtitle">冻结 DFlash backbone，以同一并行块中前一槽位的 hidden state 修正后一槽位 logits</p>
+          <dl class="article-meta">
+            <div><dt>实验时间</dt><dd>2026-08-29—31</dd></div>
+            <div><dt>硬件</dt><dd>4 × NVIDIA A100 80GB PCIe</dd></div>
+            <div><dt>模型</dt><dd>Qwen3-8B / DFlash block-16</dd></div>
+            <div><dt>状态</dt><dd>训练与真实成对评测完成；数据分布不对齐</dd></div>
+          </dl>
+        </header>
+
+        <section class="abstract" aria-labelledby="abstract-title">
+          <h2 id="abstract-title">摘要</h2>
+          <p>本实验给已经训练好的 DFlash（Block Diffusion for Flash Speculative Decoding，块扩散快速推测解码）增加一个低秩 residual head。DFlash 一次并行产生 15 个 proposal token；新 head 不做逐 token 自回归循环，而是读取第 <var>i−1</var> 个槽位的最终 hidden state，生成一个词表维度的 logit 增量，加到第 <var>i</var> 个槽位的原始 logits 上。DFlash backbone、target embedding 和语言模型输出层全部冻结，训练参数只有约 1,997 万个。</p>
+          <p>5K、追加 5K 和 30K 三个阶段的离线 validation 都显示正向变化；30K 阶段 full top-1 accuracy 从 0.3194 提高到 0.3327，离线 expected accepted length（EAL，期望接受长度代理值）从 1.7398 提高到 1.8788。但是在 GSM8K、MATH-500、HumanEval 和 MBPP 各 128 条 non-thinking greedy 生成中，平均每轮接受的 draft token 宏平均从 5.5010 降到 5.3227，下降 3.24%，四个数据集和 15 个 proposal 位置均未出现总体改善。</p>
+          <p><strong>本轮结果存在明确的数据分布问题：</strong>5K 与 30K 训练 JSONL 的每一条 assistant response 都包含 <code>&lt;think&gt;</code>，而正式推理使用 Qwen3 non-thinking chat template。官方 DeepSpec 的 Qwen3 checkpoint 则使用对应 target model 在 non-thinking 模式下重新生成的 Open-PerfectBlend response。因此当前负向在线结果不能直接证明 refiner 结构无效；它首先说明“在 thinking 轨迹上训练、在 non-thinking 轨迹上部署”的 head 会破坏原本较强的 non-thinking DFlash。与此同时，逐位置 loss 和离线 EAL 也没有完整模拟连续前缀接受过程，后续即使换成 non-thinking 数据仍须以真实 acceptance 为最终判断。</p>
+        </section>
+
+        <nav class="toc" aria-labelledby="toc-title">
+          <h2 id="toc-title">目录</h2>
+          <ol>
+            <li><a href="#question">问题与边界</a></li>
+            <li><a href="#architecture">新增结构</a></li>
+            <li><a href="#training-flow">训练数据流</a></li>
+            <li><a href="#loss">监督目标与 Loss</a></li>
+            <li><a href="#stages">训练步骤与配置</a></li>
+            <li><a href="#offline-results">离线结果</a></li>
+            <li><a href="#inference-flow">推理数据流</a></li>
+            <li><a href="#online-results">真实 Acceptance 结果</a></li>
+            <li><a href="#diagnosis">Thinking 数据诊断</a></li>
+            <li><a href="#verification">实现核对与限制</a></li>
+            <li><a href="#conclusion">结论与下一步</a></li>
+          </ol>
+        </nav>
+
+        <section id="question">
+          <h2>1. 问题与实验边界</h2>
+          <p>DFlash 把一个已确认 token 作为 <strong>anchor（锚点）</strong>，在它后面放置多个 mask token，并通过一次非自回归 draft forward 并行预测一个 block。Qwen3-8B 的公开 DFlash block-16 checkpoint 每个 block 有 16 个槽位：slot 0 是 anchor，slot 1—15 是 proposal（候选）位置。目标模型随后一次验证这些候选，只提交从 slot 1 开始连续正确的前缀。</p>
+          <p><strong>Backbone（主体网络）</strong>指已经训练好的 DFlash transformer；<strong>hidden state（隐状态）</strong>是它在某个槽位输出的 <var>D</var> 维连续向量；<strong>logits</strong> 是语言模型输出层对词表中每个 token 给出的、softmax 之前的未归一化分数。原始 DFlash 使用每个槽位自己的最终 hidden state <var>h<sub>i</sub></var> 产生 logits。实验问题是：同一 block 中 <var>h<sub>i−1</sub></var> 是否包含原输出层没有充分利用、但能修正 slot <var>i</var> 的信息？第一版特意保持最小化，只测试这一条信息路径。</p>
+          <table>
+            <caption>表 1. 本版包含和不包含的机制</caption>
+            <thead><tr><th>包含</th><th>不包含</th></tr></thead>
+            <tbody>
+              <tr><td>前一槽位最终 hidden state</td><td>前一槽位采样出的 hard token</td></tr>
+              <tr><td>低秩非线性 logit residual</td><td>完整前一位置 logits 或 soft-token embedding</td></tr>
+              <tr><td>一次并行 block forward</td><td>第二次 Jacobi 迭代或逐 token 重算</td></tr>
+              <tr><td>冻结已有 DFlash，只训练新 head</td><td>联合微调 target model 或 DFlash backbone</td></tr>
+            </tbody>
+          </table>
+          <p class="note">这里的“前一位置”是 DFlash 并行 block 内的相邻槽位，不是严格自回归模型中“只看见真实前缀到 <var>i−1</var>”的状态。同一 block 内的 draft 槽位按照 DFlash 的非自回归 attention mask 共同计算，因此 <var>h<sub>i−1</sub></var> 是并行草稿表示，而不是新增的真实 token 信息。</p>
+        </section>
+
+        <section id="architecture">
+          <h2>2. 新增结构</h2>
+          <h3>2.1 张量定义</h3>
+          <p>记 <var>N</var> 为当前 packed batch 中抽取的 anchor block 数，<var>B=16</var> 为 block size，<var>D=4096</var> 为 DFlash hidden size，<var>R=128</var> 为 refinement bottleneck rank，<var>V=151936</var> 为 Qwen3-8B 词表大小。DFlash backbone 对所有 block 输出：</p>
+          <div class="math-block">
+            <span class="math-line">\(H\in\mathbb{R}^{1\times N\times B\times D}\)</span>
+            <span class="math-line">\(L^{\mathrm{base}}=\operatorname{LMHead}(H)\in\mathbb{R}^{1\times N\times B\times V}\)</span>
+          </div>
+          <p>新增 head 有两个无 bias 的线性层。下投影把 4096 维 hidden 压缩到 128 维，SiLU（Sigmoid Linear Unit）提供非线性，上投影再恢复到整个词表：</p>
+          <div class="math-block">
+            <span class="math-line">\(W_{\mathrm{down}}\in\mathbb{R}^{R\times D},\quad W_{\mathrm{up}}\in\mathbb{R}^{V\times R}\)</span>
+            <span class="math-line">\(\Delta L_{n,i}=W_{\mathrm{up}}\operatorname{SiLU}(W_{\mathrm{down}}h_{n,i-1}),\quad i=1,\ldots,15\)</span>
+            <span class="math-line">\(L^{\mathrm{refined}}_{n,i}=L^{\mathrm{base}}_{n,i}+\Delta L_{n,i}\)</span>
+            <span class="math-line">\(\Delta L_{n,0}=0\)</span>
+          </div>
+          <p>实现先把展平的 <code>[1, NB, D]</code> 恢复为 <code>[1, N, B, D]</code>，只取每个 block 的 hidden slot 0—14，得到 <code>[1, N, 15, D]</code>。head 输出 <code>[1, N, 15, V]</code> 后，在 slot 维前面拼接一个全零张量，再与 <code>[1, N, 16, V]</code> 的 base logits 相加。这样 slot 1 使用 slot 0，slot 15 使用 slot 14；一个 block 的 slot 15 不会越界修正下一个 block 的 slot 0。</p>
+
+          <h3>2.2 为什么使用 residual 和零初始化</h3>
+          <p>上投影 <var>W<sub>up</sub></var> 初始化为严格全零，因此训练开始时所有 <var>ΔL=0</var>，refined logits 与 base DFlash 逐元素一致。第一步反向传播先更新 <var>W<sub>up</sub></var>；当它离开零点后，梯度才进一步进入随机初始化的 <var>W<sub>down</sub></var>。这种 residual 初始化提供一个清楚的不变量：step 0 若改变 base 输出，说明 shift、checkpoint 加载或 dtype 路径存在实现错误。</p>
+          <p>rank-128 head 的参数量为 <var>R(D+V)=19,972,096</var>。BF16 权重约 38.1 MiB；参数本身不大，但每个有效位置都产生 <var>V</var> 维 residual。在 1,536 anchors、每 block 15 个修正位置时，宽词表中间激活是显存和训练吞吐的主要新增成本。</p>
+
+          <figure class="flow-figure">
+            <div class="flow-stack">
+              <div class="flow-node"><strong>DFlash block hidden：h₀, h₁, …, h₁₅</strong><span>一次并行 backbone forward；slot 0 是 anchor，slot 1—15 是 proposal</span></div>
+              <div class="flow-node"><strong>Base 路径：h₁…h₁₅ → 冻结 LM head</strong><span>得到原始 proposal logits L¹base…L¹⁵base</span></div>
+              <div class="flow-node accent"><strong>Refiner 路径：h₀…h₁₄ → down → SiLU → up</strong><span>得到与后一槽位严格对齐的词表 residual ΔL₁…ΔL₁₅</span></div>
+              <div class="flow-node result"><strong>逐位置相加后采样 proposal</strong><span>Lᵢrefined = Lᵢbase + ΔLᵢ；没有新增 token-by-token draft 循环</span></div>
+            </div>
+            <figcaption>图 1. 新增 head 的 block 内数据流。训练和推理都使用同一槽位偏移。</figcaption>
+          </figure>
+        </section>
+
+        <section id="training-flow">
+          <h2>3. 训练数据流</h2>
+          <p>训练采用 Speculators 的 online hidden-state 流程。“Online”只表示冻结 target 的 hidden states 按 batch 即时生成；target model 不参与反向传播，也不更新权重。</p>
+          <ol>
+            <li><strong>读取对话。</strong>JSONL 中每条记录包含 user/assistant turns。tokenizer 按训练数据原有完整对话编码，构造 <code>input_ids</code>、只监督 assistant 区间的 <code>loss_mask</code>、文档边界和 position IDs。</li>
+            <li><strong>Target hidden-state server。</strong>GPU 0 上的冻结 Qwen3-8B vLLM server 接收同一 token 序列，返回 target 第 2、10、18、26、34 层的 hidden states，以及用于构造 teacher 分布的 final hidden state。</li>
+            <li><strong>多层压缩。</strong>五层 target hidden 在最后一维拼接，经 DFlash 已训练的线性层和 RMSNorm 压回 <var>D=4096</var>，形成每个真实 token 的 target context feature。</li>
+            <li><strong>抽取 anchors。</strong>trainer 从有效 assistant token 位置抽取最多 1,536 个 anchor。每个 anchor 扩展为 16 槽 block：slot 0 放真实 anchor token，slot 1—15 放 DFlash mask token。</li>
+            <li><strong>冻结 DFlash forward。</strong>mask embeddings 经过五层 DFlash draft transformer，并按照 anchored-block attention mask 读取真实 target context，输出形状为 <code>[1, NB, D]</code> 的 <var>H</var> 和 base logits。</li>
+            <li><strong>构造 teacher logits。</strong>冻结 target 的 final hidden state 经 target RMSNorm 和 LM head 投影到词表。索引相对 anchor 做一位对齐，使 slot <var>i</var> 的 teacher distribution 对应训练序列中该 proposal 位置的真实 target 分布。</li>
+            <li><strong>应用 refiner。</strong>将 <var>H</var> 恢复 block 维，执行严格的同 block 一槽右移，产生 refined logits。slot 0 在 loss mask 中被排除。</li>
+            <li><strong>计算 loss 与反向传播。</strong>只对 refined logits 计算 CE、TV 和位置衰减；GPU 1—3 以 distributed data parallel（DDP，分布式数据并行）同步两个 head 权重的梯度。</li>
+            <li><strong>消费缓存。</strong>本轮 online 配置为 <code>on-missing=generate</code>、<code>on-generate=delete</code>，target hidden-state 临时文件被 trainer 读取后删除。</li>
+          </ol>
+          <figure class="flow-figure">
+            <div class="flow-stack">
+              <div class="flow-node"><strong>Thinking 对话 token 序列</strong><span>user prompt + assistant 的 &lt;think&gt; 推理过程和最终答案</span></div>
+              <div class="flow-node"><strong>冻结 Qwen3-8B</strong><span>输出五层 context hidden、final hidden 和 teacher vocabulary distribution</span></div>
+              <div class="flow-node"><strong>冻结 DFlash backbone</strong><span>真实 target context + anchor/mask block → 并行 hidden H 与 base logits</span></div>
+              <div class="flow-node accent"><strong>可训练 low-rank refiner</strong><span>前一槽 hidden → 词表 residual → refined logits</span></div>
+              <div class="flow-node result"><strong>0.1 CE + 0.9 TV</strong><span>assistant mask、block 位置衰减；只更新 down/up 两个矩阵</span></div>
+            </div>
+            <figcaption>图 2. 本轮 online 训练的端到端数据流。主要风险不在计算链路，而在最上游 response 是 thinking 轨迹。</figcaption>
+          </figure>
+        </section>
+
+        <section id="loss">
+          <h2>4. 监督目标与 Loss 设计</h2>
+          <h3>4.1 Teacher 与 student 分布</h3>
+          <p>对每个有效 proposal 位置 <var>j</var>，记 target model 的 teacher logits 为 <var>T<sub>j</sub></var>，refiner 输出为 <var>L<sub>j</sub></var>。二者经过 softmax 得到 target distribution <var>p<sub>j</sub></var> 和 draft distribution <var>q<sub>j</sub></var>：</p>
+          <div class="math-block">
+            <span class="math-line">\(p_j(v)=\operatorname{softmax}(T_j)_v,\quad q_j(v)=\operatorname{softmax}(L_j)_v\)</span>
+          </div>
+
+          <h3>4.2 Cross-entropy 项</h3>
+          <p>CE（cross-entropy，交叉熵）先取 target distribution 中概率最大的 token，记为 <var>y<sub>j</sub></var>，再最大化 student 对该 token 的概率：</p>
+          <div class="math-block"><span class="math-line">\(\mathcal{L}_{\mathrm{CE},j}=-\log q_j(y_j)\)</span></div>
+          <p>这一项关心 greedy top-1 是否靠近 target，梯度集中推动 target 最大概率 token。</p>
+
+          <h3>4.3 Total variation 项</h3>
+          <p>TV（total variation distance，总变差距离）比较完整词表分布。对推测解码的标准 rejection sampling，draft 与 target 的分布重叠记为 <var>α<sub>j</sub></var>，单位置 TV 等于 <var>1−α<sub>j</sub></var>：</p>
+          <div class="math-block">
+            <span class="math-line">\(\mathcal{L}_{\mathrm{TV},j}=1-\sum_{v=1}^{V}\min(p_j(v),q_j(v))\)</span>
+          </div>
+          <p>因此 TV 在给定同一前缀、同一位置时直接推动 target/draft distribution overlap；它不只匹配 argmax，也调整非最大概率 token 的概率质量。</p>
+
+          <h3>4.4 复合 loss 与位置衰减</h3>
+          <p>本轮沿用此前 DFlash/DSpark 配置：</p>
+          <div class="math-block">
+            <span class="math-line">\(\ell_j=0.1\,\mathcal{L}_{\mathrm{CE},j}+0.9\,\mathcal{L}_{\mathrm{TV},j}\)</span>
+            <span class="math-line">\(w_0=0,\quad w_j=\exp(-(j-1)/4),\quad j=1,\ldots,15\)</span>
+            <span class="math-line">\(\mathcal{L}=\frac{\sum_{n,j}m_{n,j}w_j\ell_{n,j}}{\sum_{n,j}m_{n,j}+10^{-5}}\)</span>
+          </div>
+          <p><var>m<sub>n,j</sub></var> 是 assistant/padding/anchor 对齐后的 loss mask。slot 0 是输入 anchor，所以权重为 0；越靠后的 proposal 位置权重按 <var>γ=4</var> 指数下降。代码中的分母是有效 mask 数，而不是位置权重之和，因此衰减同时改变了不同位置的相对权重和总 loss 尺度。</p>
+
+          <h3>4.5 为什么离线 EAL 不是实际接受长度</h3>
+          <p>validation 先独立统计每个 slot 的 marginal top-1 accuracy <var>a<sub>j</sub></var>，然后计算：</p>
+          <div class="math-block">
+            <span class="math-line">\(\mathrm{EAL}_{\mathrm{proxy}}=\sum_{k=1}^{15}\prod_{j=1}^{k}a_j\)</span>
+          </div>
+          <p>它用“各位置准确率的乘积”近似连续前缀正确概率，但没有在同一个真实 block 上逐条统计首次错误位置，也没有让 refined proposal 改变下一轮生成前缀。不同位置的错误高度相关时，边缘准确率乘积可以偏离真实 prefix acceptance。更重要的是，训练和 validation 都在 teacher-forced 数据前缀上计算；真实 speculative decoding 的后续 block 由当前轮实际接受结果决定。因此本页把它明确记为 <strong>offline EAL proxy</strong>，而不是线上 acceptance length。</p>
+        </section>
+
+        <section id="stages">
+          <h2>5. 训练步骤与配置</h2>
+          <table>
+            <caption>表 2. 固定模型与训练配置</caption>
+            <tbody>
+              <tr><th>Target</th><td><code>/cephfs/shared/model/Qwen3-8B</code>，BF16，训练时冻结</td></tr>
+              <tr><th>Base draft</th><td>Qwen3-8B DFlash block-16；5 个 draft transformer layers</td></tr>
+              <tr><th>Target layers</th><td>Speculators hidden-state indices <code>[2, 10, 18, 26, 34]</code></td></tr>
+              <tr><th>Refiner</th><td>rank 128；19,972,096 参数；只训练 <code>down_proj</code> 与 <code>up_proj</code></td></tr>
+              <tr><th>Optimizer</th><td>AdamW，weight decay 0，cosine scheduler，warmup ratio 4%</td></tr>
+              <tr><th>Loss</th><td>0.1 CE + 0.9 TV；DFlash fixed exponential position decay，gamma 4</td></tr>
+              <tr><th>Sequence / anchors</th><td>total sequence length 4096；每 rank 最多 1536 anchors</td></tr>
+              <tr><th>资源</th><td>GPU 0：target vLLM；GPU 1—3：3-rank DDP trainer</td></tr>
+              <tr><th>数据预取</th><td>每 rank 1 个 DataLoader worker，prefetch factor 2；vLLM max sequences 8</td></tr>
+            </tbody>
+          </table>
+
+          <h3>5.1 初始化与 smoke</h3>
+          <ol>
+            <li>从公开 Qwen3-8B DFlash block-16 checkpoint 转换并加载完整 backbone。</li>
+            <li>新建 rank-128 head，令 <code>up_proj.weight</code> 为严格全零。</li>
+            <li>冻结除 <code>refinement_head.*</code> 外的全部参数。</li>
+            <li>运行小规模 forward/backward，检查 step 0 refined/base 完全一致、首次 optimizer step 后上投影离开零点、无 OOM/NaN。</li>
+          </ol>
+
+          <h3>5.2 性能调参与 5K pilot</h3>
+          <p>无 DataLoader 预取时，每个 rank 主进程同步等待 target hidden states，单步约有 2.2 秒 fetch。加入一个 worker 后，下一批 hidden-state 请求与当前 batch 的 draft forward/backward 重叠；1,536-anchor benchmark 的显式 fetch 约降到 16 ms。1,664 anchors 只比 1,536 快约 4%，但显存快照达到约 73.6/81.9 GiB，因此正式配置选择 1,536 保留长期运行余量。</p>
+          <p>正式 5K pilot 使用 learning rate 3 × 10<sup>−4</sup>，训练 1 epoch / 1,204 steps。训练主体 36 分 15 秒，validation 65 batches / 2 分 9 秒，完整 launcher 39 分 47 秒；没有 OOM、NaN、NCCL 或 HTTP failure。</p>
+
+          <h3>5.3 追加 5K gate</h3>
+          <p>从 5K pilot checkpoint 继续训练同一 5K split 一轮，learning rate 改为 1 × 10<sup>−4</sup>。Gate 只比较“refined 减 base”的增量：full accuracy 增量必须高于上一轮的 +0.010984，EAL 增量必须高于 +0.106206。追加一轮得到 +0.011229 和 +0.110388，因此 gate 通过。</p>
+
+          <h3>5.4 30K 扩展</h3>
+          <p>Gate 通过后，从追加 5K checkpoint 初始化，在与 pilot 不重叠的 30,000 条数据上训练 1 epoch，seed 43，learning rate 1 × 10<sup>−4</sup>。训练 7,213 steps / 3 小时 46 分 42 秒，validation 374 batches / 10 分 58 秒；完整 staged 流程在 2026-08-30 17:00 结束。</p>
+        </section>
+
+        <section id="offline-results">
+          <h2>6. 离线 Validation 结果</h2>
+          <table>
+            <caption>表 3. 同一 validation forward 内的 base/refined 对照</caption>
+            <thead><tr><th>阶段</th><th>Refined loss</th><th>Base full acc</th><th>Refined full acc</th><th>Base EAL proxy</th><th>Refined EAL proxy</th><th>Changed top-1</th></tr></thead>
+            <tbody>
+              <tr><td>5K × 1</td><td>0.2077</td><td>0.3104</td><td><strong>0.3214</strong> (+0.0110)</td><td>1.6975</td><td><strong>1.8037</strong> (+0.1062)</td><td>23.83%</td></tr>
+              <tr><td>5K 追加 1 epoch</td><td>0.2079</td><td>0.3098</td><td><strong>0.3210</strong> (+0.0112)</td><td>1.6883</td><td><strong>1.7986</strong> (+0.1104)</td><td>24.67%</td></tr>
+              <tr><td>30K × 1</td><td>0.2010</td><td>0.3194</td><td><strong>0.3327</strong> (+0.0132)</td><td>1.7398</td><td><strong>1.8788</strong> (+0.1390)</td><td>25.06%</td></tr>
+            </tbody>
+          </table>
+          <p>每一阶段都在同一 batch、同一次 DFlash backbone forward 中同时计算 base 与 refined 指标，因此阶段内差值可信。30K 与 5K 使用不同 validation split，不能把它们的绝对 accuracy 变化简单解释为继续训练收益；能直接比较的是每个阶段内部 refined 相对 base 的差值。</p>
+          <p>5K pilot 的 15 个 proposal 位置全部出现正向 top-1 变化：slot 1 从 0.7719 提高到 0.7903，slot 8 从 0.2403 提高到 0.2494，slot 15 从 0.1261 提高到 0.1327。这个结果排除了“只改善第一个位置、后半 block 系统性退化”的简单失败模式，但没有排除 teacher-forced 分布和真实生成分布不同。</p>
+        </section>
+
+        <section id="inference-flow">
+          <h2>7. 推理数据流</h2>
+          <p>训练 checkpoint 只保存两个 refiner 权重；原生 DFlash runtime 仍从公开 DFlash checkpoint 加载 backbone，并从 Qwen3-8B target 加载 embedding 与 LM head。加载器检查 hidden size、词表大小、block size 和 target layer index 映射，避免把不兼容 head 静默接入。</p>
+          <ol>
+            <li>对当前已确认 target prefix 建立 target 与 draft key-value cache（KV cache，注意力键值缓存）。</li>
+            <li>DFlash 在 anchor 后放置 15 个 mask，一次 forward 输出完整 16-slot hidden：<var>h<sub>0</sub>, …, h<sub>15</sub></var>。</li>
+            <li>原始 proposal logits 从 <var>h<sub>1</sub>, …, h<sub>15</sub></var> 经冻结 target LM head 得到。</li>
+            <li>refiner 必须保留完整 block hidden，从 <var>h<sub>0</sub>, …, h<sub>14</sub></var> 计算 residual，并逐项加到对应的 15 个 base proposal logits。若先裁掉 anchor 再 shift，会让所有位置错一格。</li>
+            <li>对 refined logits 做 greedy argmax，得到 15 个 proposal token。</li>
+            <li>target model 在正确 KV cache 上一次验证 proposal，接受从开头连续相同的 draft tokens，并给出一个 target bonus token。</li>
+            <li>更新已确认前缀与 cache，进入下一轮；任何被拒后缀都不会直接提交。</li>
+          </ol>
+          <p>成对评测对每个 prompt 运行两次完整生成：一次关闭 head 得到 base DFlash，一次打开同一 head 得到 refined DFlash。两次各自重建 cache，后续上下文由各自真实接受结果决定。temperature 为 0，因此正确的推测解码无论 proposal 如何变化，都必须保持 target greedy 输出不变。</p>
+          <table>
+            <caption>表 4. 线上指标定义</caption>
+            <tbody>
+              <tr><th>Mean accepted draft tokens</th><td>每次 target verification 从 proposal 开头连续接受的 draft token 数；不包含 bonus token。</td></tr>
+              <tr><th>Mean committed tokens</th><td>每轮实际推进的 token 数；本实验等于 accepted draft tokens + 1 个 target bonus token。</td></tr>
+              <tr><th>Position acceptance</th><td>第 <var>i</var> 个 proposal 能被到达并接受的 verification 轮次占比，即接受长度至少为 <var>i</var> 的比例。</td></tr>
+              <tr><th>Greedy output match</th><td>base/refined 最终 token 序列完全相同的 prompt 数，用于检查 lossless 推测解码正确性。</td></tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section id="online-results">
+          <h2>8. 真实 Acceptance 结果</h2>
+          <p>正式评测使用 Transformers + PyTorch SDPA（scaled dot-product attention，缩放点积注意力）后端、4 卡数据并行、每个数据集 128 条、每条最多 512 个新 token、Qwen3 non-thinking chat template、temperature 0。这里报告的是 acceptance 正确性实验，不是经过 FlashAttention/vLLM 优化的部署吞吐 benchmark。</p>
+          <table>
+            <caption>表 5. 四数据集成对真实生成结果</caption>
+            <thead><tr><th>数据集</th><th>Verification 轮数（base / refined）</th><th>Base accepted</th><th>Refined accepted</th><th>变化</th><th>每 token 时间变化</th><th>Greedy 输出一致</th></tr></thead>
+            <tbody>
+              <tr><td>GSM8K</td><td>6,159 / 6,301</td><td>5.2913</td><td>5.1252</td><td>−0.1661（−3.14%）</td><td>6.847 → 7.038 ms（+2.79%）</td><td>128 / 128</td></tr>
+              <tr><td>MATH-500</td><td>7,749 / 7,996</td><td>6.5113</td><td>6.2734</td><td>−0.2379（−3.65%）</td><td>5.728 → 5.919 ms（+3.33%）</td><td>128 / 128</td></tr>
+              <tr><td>HumanEval</td><td>8,340 / 8,511</td><td>5.4771</td><td>5.3252</td><td>−0.1519（−2.77%）</td><td>6.844 → 6.982 ms（+2.01%）</td><td>128 / 128</td></tr>
+              <tr><td>MBPP</td><td>6,519 / 6,677</td><td>4.7243</td><td>4.5670</td><td>−0.1573（−3.33%）</td><td>7.451 → 7.622 ms（+2.29%）</td><td>128 / 128</td></tr>
+              <tr><td><strong>宏平均</strong></td><td>—</td><td><strong>5.5010</strong></td><td><strong>5.3227</strong></td><td><strong>−0.1783（−3.24%）</strong></td><td>—</td><td><strong>512 / 512</strong></td></tr>
+            </tbody>
+          </table>
+          <p>四个数据集的 mean accepted draft tokens 全部下降；每个数据集 15 个 position acceptance delta 也全部为负。因为输出 token 总数相同而 refined 需要更多 verification 轮次，head 没有把 offline gain 转化为连续接受前缀。额外低秩 projection 又使当前未优化 Transformers 实现的每 token 时间增加约 2%—3%，所以 acceptance 和运行时间两个方向都不支持部署。</p>
+          <p class="note">正式 JSON 和 launcher log 没有记录传入的 refiner checkpoint 绝对路径。这组评测发生在 staged 5K→30K 训练完成后，但缺少命令级 provenance，不能在报告中伪造具体 checkpoint 归属。该缺口不影响“被评测 head 在四个数据集均降低 acceptance”的原始统计，但影响不同训练阶段之间的严格 checkpoint 归因；后续脚本必须把 checkpoint、git commit 和模型哈希写入结果 JSON。</p>
+        </section>
+
+        <section id="diagnosis">
+          <h2>9. Thinking 数据诊断</h2>
+          <h3>9.1 官方训练数据与本轮数据的实际差异</h3>
+          <table>
+            <caption>表 6. Prompt 同源不等于 response 轨迹相同</caption>
+            <thead><tr><th>项目</th><th>官方 DeepSpec Qwen3 DFlash/DSpark</th><th>本轮 refiner</th></tr></thead>
+            <tbody>
+              <tr><td>Prompt 来源</td><td><code>mlabonne/open-perfectblend</code></td><td>社区 PerfectBlend Qwen3-8B regenerated 数据，prompt 分布同源</td></tr>
+              <tr><td>Assistant response</td><td>由对应 target model 重新生成</td><td><code>jihwan1205/perfectblend-qwen3-8b-regen</code></td></tr>
+              <tr><td>Qwen3 模式</td><td><strong>Non-thinking</strong></td><td><strong>Thinking</strong>；5K 的 5,000/5,000 和 30K 的 30,000/30,000 行均含 <code>&lt;think&gt;</code></td></tr>
+              <tr><td>正式测试</td><td>Non-thinking benchmarks</td><td>GSM8K、MATH-500、HumanEval、MBPP 均使用 non-thinking template</td></tr>
+            </tbody>
+          </table>
+          <p>Draft/refiner 学的不是抽象的“语言能力”，而是 target model 在具体前缀状态下的条件分布。thinking response 会经过长推理、枚举、回溯和自我修正；non-thinking response 则从不同 chat-template 控制状态开始，更直接地生成答案。即使 user prompt 相同，下面两类监督也不是同一个训练样本：</p>
+          <div class="math-block">
+            <span class="math-line">Thinking：\(p_T(x_{t+1}\mid \text{prompt},\langle think\rangle,x_{1:t})\)</span>
+            <span class="math-line">Non-thinking：\(p_T(y_{s+1}\mid \text{prompt},y_{1:s},\text{thinking disabled})\)</span>
+          </div>
+          <p>本轮所有 target hidden states、teacher logits、DFlash hidden 和 refiner 梯度都沿 thinking token 前缀产生；线上却把同一个 head 施加到 non-thinking hidden states。低秩 residual 学到的是“在 thinking 状态分布上如何改写 base logits”，而不是一个保证跨模式成立的普适修正。更不利的是，base DFlash 本身是面向 non-thinking 使用的强 checkpoint；错分布 head 只需把少量 top-1 推离正确 token，就会缩短整轮连续接受前缀。</p>
+
+          <h3>9.2 为什么 30K 离线更好仍不能消除问题</h3>
+          <p>扩大同一错位分布的数据，只会更精确地拟合 thinking teacher。30K validation 仍从相同 thinking 数据分布切分，所以 loss、top-1 和 EAL proxy 同步改善是合理的；它们没有测试 head 在 non-thinking hidden states 上的行为。这与真实测试四个数据集全部下降并不矛盾。</p>
+
+          <h3>9.3 仍存在第二层目标错配</h3>
+          <p>数据模式不是唯一待验证因素。CE 与 TV 都在 teacher-forced 的每个位置独立计算；线上收益要求 slot 1 开始连续正确，且本轮 proposal 会改变下一轮 prefix。当前位置衰减鼓励前部位置，但 loss 没有直接计算每个 block 的首错位置，offline EAL 又是 marginal accuracy 的乘积。因此正确结论是：</p>
+          <ol>
+            <li>当前 thinking→non-thinking 分布错配足以使本轮结果不适合作为结构结论；应先修正数据。</li>
+            <li>换成 target-specific non-thinking on-policy 数据后，仍需保留真实 paired acceptance 评测，不能只依据 offline EAL 放大训练。</li>
+            <li>若 non-thinking 数据仍出现离线提高、线上下降，再单独比较现有 loss 与 prefix-aware objective，而不是同时改变结构、数据和 loss。</li>
+          </ol>
+          <p class="note">不能简单删除 <code>&lt;think&gt;…&lt;/think&gt;</code>。删除文本后的最终答案不是 Qwen3-8B 在 <code>enable_thinking=false</code> 下真实生成的 token 轨迹，也无法恢复对应 hidden states 和 teacher logits。正确修复是从相同 prompts 重新运行 target model，并明确关闭 thinking。</p>
+        </section>
+
+        <section id="verification">
+          <h2>10. 实现核对、已排除问题与限制</h2>
+          <h3>10.1 已完成的结构核对</h3>
+          <ul>
+            <li><strong>零初始化等价：</strong><code>up_proj=0</code> 时 refined logits 与 base logits 严格一致；关闭 head 直接返回 base logits。</li>
+            <li><strong>Shift 与 block 边界：</strong>slot <var>i</var> 只响应同 block 的 <var>h<sub>i−1</sub></var>；block 尾部不会影响下一个 anchor；非整 block 输入显式报错。</li>
+            <li><strong>训练/推理一致：</strong>训练从 <var>h<sub>0</sub>, …, h<sub>14</sub></var> 修正 slot 1—15；推理保留完整 16-slot hidden 后执行相同对齐。</li>
+            <li><strong>冻结有效：</strong>初始化与 5K checkpoint 对比，60 个非-refinement tensors 逐元素不变；只有 down/up 两个权重更新。</li>
+            <li><strong>Checkpoint 兼容检查：</strong>加载时检查 hidden size、词表、block size、模型类型和 target layer IDs，只允许两个 refiner tensors。</li>
+            <li><strong>Lossless 输出：</strong>四数据集共 512 个 prompt 的 base/refined greedy target 输出全部一致，说明 proposal 变化没有破坏 target 输出正确性。</li>
+          </ul>
+
+          <h3>10.2 指标实现修复</h3>
+          <p>早期 distributed 日志中的 <code>base_full_acc</code> 被错误缩小。原因是两个 metric total 共享 tensor，trainer 对每个 metric 原地执行 distributed reduction，导致 rank 0 同一分母被归约两次。修复后每个 counted metric 使用独立 total，trainer 在 reduction 前 clone tensor；正式 step 0 的 refined/base full accuracy 相同，<code>refinement_changed_top1=0</code>。本页表格使用修复后的 validation 文件，不使用早期错误日志。</p>
+
+          <h3>10.3 当前限制</h3>
+          <ol>
+            <li>正式 acceptance JSON 缺少 refiner checkpoint 路径、git commit 和权重哈希，阶段归因不完整。</li>
+            <li>推理使用 Transformers SDPA，不是 vLLM/SGLang 部署路径；每 token 时间只说明当前实现有额外成本。</li>
+            <li>四个 benchmark 都是 non-thinking，尚未补做同 checkpoint 的 thinking 测试来直接量化模式内外差异。</li>
+            <li>当前 loss 使用 teacher-forced position objective，offline EAL 不是逐 block 真实 prefix length。</li>
+            <li>尚未得到 5K target-specific non-thinking 训练结果，因此不能判断同一结构在对齐数据上是否转正。</li>
+          </ol>
+        </section>
+
+        <section id="conclusion">
+          <h2>11. 结论与下一步</h2>
+          <ol>
+            <li>结构与工程链路已跑通：head 只读同 block 前一 hidden，不跨 block，不增加逐 token draft 循环，冻结和训练/推理 shift 均通过核对。</li>
+            <li>本轮 thinking 数据上的 offline 指标稳定改善，说明 rank-128 head 有能力拟合 teacher distribution；这不是线上收益证据。</li>
+            <li>non-thinking 真实生成中，四数据集 acceptance 宏平均下降 3.24%，且额外 projection 增加当前后端耗时；现 checkpoint 不应部署或继续无条件扩大训练。</li>
+            <li>训练的 35,000 条 response 全部包含 thinking trace，而测试和官方 Qwen3 DFlash recipe 是 non-thinking。这是当前最明确的分布错配，必须先生成 target-specific non-thinking on-policy 数据。</li>
+            <li>下一项受控实验应复用同一组 5,000 个 prompts，只用 Qwen3-8B <code>enable_thinking=false</code> 重新生成 response；保持 base checkpoint、head、seed、训练步数和 loss 不变，再比较 offline 与四数据集 paired acceptance。</li>
+            <li>只有 non-thinking 5K 仍出现相同错配时，才进入第二组受控实验：保持数据不变，加入直接面向连续 prefix 的 loss 或真实 block-level checkpoint 选择指标。</li>
+          </ol>
+        </section>
+
+        <section class="references">
+          <h2>原始记录</h2>
+          <ol>
+            <li><a href="https://github.com/mokomoko05/dLLMSpec/tree/exp/dflash-hidden-refiner-inference/agentWorkSpace/20260829_dflash_hidden_refinement">实验工作区、训练计划、实现报告和运行脚本</a></li>
+            <li><a href="https://github.com/mokomoko05/dLLMSpec/blob/exp/dflash-hidden-refiner-inference/agentWorkSpace/20260829_dflash_hidden_refinement/EXPERIMENT_RESULTS_20260830.md">4×A100 5K pilot 与性能调参报告</a></li>
+            <li><a href="https://github.com/mokomoko05/dLLMSpec/blob/exp/dflash-hidden-refiner-inference/agentWorkSpace/20260829_dflash_hidden_refinement/INFERENCE_EVALUATION.md">真实推理接入与成对评测定义</a></li>
+            <li><a href="https://github.com/mokomoko05/dLLMSpec-speculators/commit/62be4e9d328677ba2139601bc88bfc92eefa0e2d">Speculators refiner 训练实现 commit</a></li>
+            <li><a href="https://github.com/mokomoko05/dLLMSpec-dflash/commit/537e6db36cf2f03106475e5a5cc5f2872a92db6e">DFlash Transformers 推理与 paired benchmark commit</a></li>
+            <li><a href="https://github.com/deepseek-ai/DeepSpec">DeepSpec 官方仓库与 non-thinking 数据生成流程</a></li>
+          </ol>
+        </section>
+      </article>
+    </main>
+
+    <footer class="page-footer">
+      <span>DFlash 前一位置 Hidden Refiner 实验 · 2026-08-29—31</span>
+      <a href="../">返回内容目录</a>
+    </footer>
+  </body>
+</html>

@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="DFlash2 风格 path selector 训练实验进展、代码级数据流、loss 设计和逐版本结果。">
+  <title>DFlash2 Path Selector 训练实验进展</title>
+  <link rel="stylesheet" href="styles.css">
+  <script>window.MathJax={tex:{inlineMath:[["$","$"],["\\(","\\)"]]},options:{skipHtmlTags:["script","noscript","style","textarea","pre","code"]}};</script>
+  <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+</head>
+<body>
+<nav class="top-nav" aria-label="站点导航"><a href="../">← 内容目录</a><span>dLLMSpec 实验报告</span></nav>
+<main><article>
+<header class="article-header">
+  <h1>DFlash2 Path Selector 训练实验进展</h1>
+  <p class="subtitle">从早期独立候选重排，到 Speculators 中与 DFlash2 推理路径一致的训练</p>
+  <dl class="article-meta">
+    <div><dt>报告时间</dt><dd>2026-09-03</dd></div>
+    <div><dt>当前训练</dt><dd>30k non-thinking × 5 epochs，进行中</dd></div>
+    <div><dt>模型</dt><dd>Qwen3-8B target / DFlash block-16</dd></div>
+    <div><dt>硬件</dt><dd>4 × NVIDIA A100 80GB PCIe</dd></div>
+  </dl>
+</header>
+<section class="abstract" aria-labelledby="abstract-title">
+  <h2 id="abstract-title">摘要</h2>
+  <p>本页只讨论 DFlash2 风格的 <strong>path selector</strong>：它不生成词表外的新 token，而是在 DFlash 每个 proposal 槽位的 top-<var>K</var> 候选中重新选择一条连贯路径。selector 的可训练参数是隐藏状态投影、前驱 token codebook 和后继 token codebook；Qwen3-8B target 与原始 DFlash backbone 始终冻结。</p>
+  <p>最重要的有效版本是 5k non-thinking、<code>lr=1e-4</code>、纯 teacher forcing 的 top-<var>K=64</var> 训练，以及其 30k、1 epoch 扩展。前者在 GSM8K 512 条 paired full-round 评测中每轮 target 接受长度增加 <strong>0.0481</strong> token，并在 GSM8K、MATH-500、MBPP、HumanEval、MT-Bench 上方向为正；后者在 7 个数据集、每集最多 128 条的评测中全部为正，GSM8K 增加 <strong>0.2802</strong>、MATH-500 增加 <strong>0.2683</strong> 个 target 接受 draft token。当前 30k×5 epoch run 尚未完成，不能提前把这些数字归因于新 epoch。</p>
+  <p class="note">“接受长度”统一指一次 verification round 中 target 实际接受的连续 draft token 数，不包含 target bonus token；它不是最终答案准确率，也不是离线 validation loss。</p>
+</section>
+<nav class="toc" aria-labelledby="toc-title"><h2 id="toc-title">目录</h2><ol>
+  <li><a href="#status">当前进展</a></li><li><a href="#terminology">术语与边界</a></li>
+  <li><a href="#inference-flow">官方一致的推理数据流</a></li><li><a href="#training-flow">Speculators 训练数据流</a></li>
+  <li><a href="#loss">Loss 与指标</a></li><li><a href="#versions">有意义的实验版本</a></li>
+  <li><a href="#results">真实 round 结果</a></li><li><a href="#lessons">结论与限制</a></li><li><a href="#sources">代码与原始记录</a></li>
+</ol></nav>
+<section id="status"><h2>1. 当前进展</h2>
+  <p>当前 run 是 <code>agentWorkSpace/20260901_dflash2_path_selector_refiner/runs/20260903_5epoch_teacher_forced_30k_4gpu</code>。它从 selector 初始权重重新开始，而不是从已结束的 1-epoch 最终 checkpoint 续训；原因是 1-epoch cosine scheduler 已把学习率降到接近零，直接续训不能代表公平的第二 epoch。</p>
+  <table><caption>表 1. 2026-09-03 21:40 检查快照</caption><tbody>
+    <tr><th>训练进度</th><td>日志显示 <code>epoch=2</code>（第三个 epoch，0-based），<code>global_step=5120</code>；约 2550 steps/epoch，总计约 12,750 steps。</td></tr>
+    <tr><th>batch 诊断</th><td>最近 selector candidate coverage 约 0.848–0.891，teacher accuracy 约 0.314–0.409，base accuracy 约 0.329–0.422；这是训练 batch 统计，不是 test 接受长度。</td></tr>
+    <tr><th>GPU</th><td>GPU0 运行 hidden-state server，GPU1–3 训练 worker；检查时 GPU0 利用率约 88%，GPU1–3 约 100%。</td></tr>
+    <tr><th>checkpoint</th><td>目前已保存 <code>output/0</code> 和 <code>output/1</code>；第三个 epoch 正在写入，成功结束后预期生成 <code>output/0</code> 至 <code>output/4</code>。</td></tr>
+    <tr><th>评测</th><td>等待器已启动，训练正常退出后逐个 epoch 测试 GSM8K、Math500、AIME25、HumanEval、MBPP、MT-Bench、LiveCodeBench 的 <code>mean_target_accepted_draft_tokens_per_round</code>。</td></tr>
+    <tr><th>磁盘</th><td>共享盘约 71 GiB 可用；checkpoint 只保存 selector 轻量参数，不复制 Qwen3/DFlash backbone。</td></tr>
+  </tbody></table>
+</section>
+<section id="terminology"><h2>2. 术语与实验边界</h2>
+  <p><strong>Target model</strong> 是 Qwen3-8B，负责给出验证标准；<strong>DFlash backbone</strong> 是已训练好的 block-diffusion draft transformer，一次并行产生一个 block；<strong>anchor</strong> 是上一轮已经被 target 确认的 token，占 block 的 slot 0；<strong>proposal</strong> 是需要 target 验证的后续 token，block-16 中共有 15 个 proposal 槽位。</p>
+  <p><strong>Logit</strong> 是 softmax 之前对词表每个 token 的分数；<strong>top-k candidate</strong> 是某槽位分数最高的 <var>K</var> 个 draft token；<strong>unary score</strong> 是候选自身的原始 DFlash logit；<strong>edge score</strong> 是“给定前驱后选择当前候选”的分数。<strong>Teacher forcing</strong> 在训练时使用真实 target 前驱；推理时则使用 path walk 上一槽位实际选出的候选前驱。</p>
+  <p>本实验不把“离线 candidate coverage”误称为接受率。coverage 只回答 target token 是否在候选集合内；只有 full-round speculative decoding 才能回答连续前缀实际被 target 接受了多少 token。</p>
+</section>
+<section id="inference-flow"><h2>3. 官方一致的推理数据流</h2>
+  <h3>3.1 一次 DFlash forward 的输入和输出</h3>
+  <p>在 <code>DFlashDraftModel._backbone_forward</code> 中，已确认序列的 token 位置被选为 anchor。对每个 anchor，代码构造长度为 <var>B=16</var> 的输入：</p>
+  <div class="math-block">
+    <span class="math-line">\(x^{\mathrm{draft}}=[a,\mathrm{MASK},\mathrm{MASK},\ldots,\mathrm{MASK}]\in\mathbb{N}^{16}\)</span>
+    <span class="math-line">\(H^{\mathrm{draft}}\in\mathbb{R}^{NB\times D},\quad Z^{\mathrm{base}}=\operatorname{LMHead}(H^{\mathrm{draft}})\in\mathbb{R}^{NB\times V_d}\)</span>
+  </div>
+  <p>这里 <var>N</var> 是一次 packed forward 中的 anchor block 数，<var>D=4096</var> 是 DFlash hidden size，<var>V<sub>d</sub>=151936</var> 是 draft vocabulary。代码 reshape 成 <code>[N,16,D]</code> 和 <code>[N,16,V<sub>d</sub>]</code>，舍弃 slot 0 的 anchor 输出，只把 slot 1—15 作为 proposal：</p>
+  <div class="math-block"><span class="math-line">\(H=H^{\mathrm{draft}}_{1:16}\in\mathbb{R}^{N\times15\times D},\quad Z=Z^{\mathrm{base}}_{1:16}\in\mathbb{R}^{N\times15\times V_d}\)</span></div>
+  <p>若把完整 16 个 hidden 当作 proposal，slot 0 的 anchor hidden 会错位地监督第一个 token，训练和推理就不是同一个问题。</p>
+  <h3>3.2 候选和前驱行</h3>
+  <p>对每个 proposal slot <var>s</var>，<code>CandidatePathSelector.topk</code> 保留分数最高的 <var>K=64</var> 个 token：</p>
+  <div class="math-block"><span class="math-line">\(C=\operatorname{TopK}(Z)\in\mathbb{N}^{N\times15\times64},\quad U=\operatorname{TopKValues}(Z)\in\mathbb{R}^{N\times15\times64}\)</span></div>
+  <p><code>DFlashSelectorDraftModel._predecessor_ids</code> 构造相邻候选图：slot 0 的 64 行全部使用同一个 anchor；slot <var>s&gt;0</var> 使用 slot <var>s−1</var> 的 64 个候选。</p>
+  <div class="math-block">
+    <span class="math-line">\(P_{0,p}=a\ (p=1,\ldots,K),\quad P_{s,p}=C_{s-1,p}\ (s&gt;0)\)</span>
+    <span class="math-line">\(P\in\mathbb{N}^{N\times15\times64}\)</span>
+  </div>
+  <h3>3.3 边分数与 path walk</h3>
+  <p>selector 的三个参数是隐藏投影 \(W_h\in\mathbb{R}^{R\times D}\)、前驱 codebook \(A\in\mathbb{R}^{V_p\times R}\)、后继 codebook \(B\in\mathbb{R}^{V_d\times R}\)，本实验 <var>R=16</var>：</p>
+  <div class="math-block">
+    <span class="math-line">\(Q_{n,s,:}=W_hH_{n,s,:}\in\mathbb{R}^{R}\)</span>
+    <span class="math-line">\(E_{n,s,p,q}=U_{n,s,q}+\sum_{r=1}^{R}A_{P_{n,s,p},r}\,Q_{n,s,r}\,B_{C_{n,s,q},r}\)</span>
+    <span class="math-line">\(E\in\mathbb{R}^{N\times15\times64\times64}\)</span>
+  </div>
+  <p>边打分是一次并行 tensor contraction；之后 <code>CandidatePathSelector.walk_path</code> 按 slot 左到右做很小的 argmax：第一个 slot 从 anchor 行选候选，下一 slot 使用刚选出的候选索引作为 predecessor row。</p>
+  <div class="math-block">
+    <span class="math-line">\(\hat q_0=\arg\max_q E_{0,0,0,q}\)</span>
+    <span class="math-line">\(\hat q_s=\arg\max_q E_{0,s,\hat q_{s-1},q},\quad \hat y_s=C_{s,\hat q_s}\)</span>
+  </div>
+  <p>推理总流程是：一次 DFlash forward → 一次 LM head → 一次 selector edge scoring → 15 步小型 path walk → target verification。串行只存在于最后的索引选择，不是重新运行模型。</p>
+</section>
+<section id="training-flow"><h2>4. Speculators 训练数据流</h2>
+  <ol>
+    <li><strong>预处理。</strong><code>scripts/prepare_data.py</code> 把 30k JSONL 对话编码为 token 序列、assistant loss mask、document id 和 position id；当前数据是 non-thinking 轨迹。</li>
+    <li><strong>target hidden-state online server。</strong>GPU0 上冻结的 Qwen3-8B vLLM 服务按 batch 产生指定层 hidden states。launcher 指定 target layer ids <code>1 9 17 25 33</code>，供 DFlash context feature 使用。</li>
+    <li><strong>anchor block 构造。</strong><code>_backbone_forward</code> 抽取 anchor；每个 anchor 形成 16 槽块，slot 0 写真实 anchor，其他槽位写 mask token。</li>
+    <li><strong>冻结 DFlash forward。</strong>target context hidden 经过 DFlash 输入投影和归一化；DFlash layers 使用 anchored-block attention mask，一次输出所有 block hidden、base logits 和对齐后的 target labels。</li>
+    <li><strong>去掉 anchor。</strong>代码将结果 reshape 成 <code>[batch × num_blocks, 15, ...]</code>，得到 <code>hidden_paths</code>、<code>logits_paths</code>、<code>target_paths</code>；slot 0 loss mask 已在 backbone 中清零。</li>
+    <li><strong>两套 predecessor 视图。</strong>完整 graph 的 predecessor rows \(P\) 用于推理一致的 edge scores；当前 loss 使用 teacher-forced predecessor \(P^{\mathrm{TF}}=[a,y_1,\ldots,y_{14}]\)，其中 \(y_s\) 是 target 的第 <var>s</var> 个 proposal token。</li>
+    <li><strong>只更新 selector。</strong><code>selector_freeze_dflash_backbone=True</code> 使只有三个 selector 参数张量有梯度；checkpoint 也只保存这三组张量，加载时从官方 DFlash checkpoint 重建 backbone。</li>
+  </ol>
+  <figure class="flow-figure"><div class="flow-stack">
+    <div class="flow-node"><strong>JSONL → input_ids / loss_mask</strong><span>真实 non-thinking assistant 序列；只在有效 assistant token 上训练</span></div>
+    <div class="flow-node"><strong>冻结 Qwen3-8B</strong><span>GPU0 在线产生多层 context hidden 和 target label logits</span></div>
+    <div class="flow-node"><strong>DFlash block-16</strong><span>anchor + 15 mask，一次 forward 得到 [N,16,D] 与 [N,16,V]</span></div>
+    <div class="flow-node accent"><strong>去除 slot 0 → top-k graph</strong><span>proposal hidden [N,15,D]、候选 [N,15,64]、edge scores [N,15,64,64]</span></div>
+    <div class="flow-node result"><strong>teacher-forced CE → DDP update</strong><span>只更新三个 selector 参数张量；保存轻量 checkpoint</span></div>
+  </div><figcaption>图 1. 当前 Speculators 训练的一次 batch 数据流。</figcaption></figure>
+</section>
+<section id="loss"><h2>5. Loss 与训练指标</h2>
+  <h3>5.1 当前有效版本的 teacher-forced loss</h3>
+  <p>每个 slot 使用一个明确的真实 target 前驱，而不是把同一个 target 复制到所有 predecessor row。先计算：</p>
+  <div class="math-block">
+    <span class="math-line">\(S^{\mathrm{TF}}_{n,s,q}=U_{n,s,q}+\sum_{r=1}^{R}A_{P^{\mathrm{TF}}_{n,s},r}\,Q_{n,s,r}\,B_{C_{n,s,q},r}\)</span>
+    <span class="math-line">\(S^{\mathrm{TF}}\in\mathbb{R}^{N\times15\times64}\)</span>
+  </div>
+  <p>若 target token \(y_{n,s}\) 在候选集合 \(C_{n,s,:}\) 中，令其候选排名为 \(r_{n,s}\)，对有效位置集合 \(\mathcal{V}\) 计算：</p>
+  <div class="math-block">
+    <span class="math-line">\(\ell_{n,s}=-\log\frac{\exp S^{\mathrm{TF}}_{n,s,r_{n,s}}}{\sum_{q=1}^{64}\exp S^{\mathrm{TF}}_{n,s,q}}\)</span>
+    <span class="math-line">\(w_s=0.8^{s},\qquad \mathcal{L}=\frac{\sum_{(n,s)\in\mathcal{V}}w_s\ell_{n,s}}{\sum_{(n,s)\in\mathcal{V}}w_s}\)</span>
+  </div>
+  <p><code>_teacher_forced_selector_loss</code> 先生成 <code>present</code> mask，再只对 present 位置取 CE；位置权重是 <code>selector_position_decay ** slot_positions</code>。前部 slot 权重更高，因为第一个错误会截断后续连续接受；这仍是 surrogate objective，不是直接优化真实 EAL。</p>
+  <h3>5.2 被淘汰的 all-predecessor loss</h3>
+  <p>早期版本使用完整 \(E\in\mathbb{R}^{N\times15\times64\times64}\)，把同一个 target rank 沿 predecessor 轴复制 64 次：</p>
+  <div class="math-block"><span class="math-line">\(\mathcal{L}_{\mathrm{all}}=\frac{1}{|\mathcal{V}|K}\sum_{(n,s)\in\mathcal{V}}\sum_{p=1}^{K}w_s\,\operatorname{CE}(E_{n,s,p,:},r_{n,s})\)</span></div>
+  <p>这相当于监督“无论前驱是什么，都应该选同一个 target”，比推理时的单一路径条件更强，也把不同前驱条件混成了一个标签。30k all-predecessor 版本真实收益混合且不稳定，因此当前改为每个 slot 一个 teacher predecessor。</p>
+  <h3>5.3 初始化、覆盖和最终指标</h3>
+  <p><code>successor_codebook</code> 严格零初始化，因此：</p>
+  <div class="math-block"><span class="math-line">\(B=0\Longrightarrow E_{n,s,p,q}=U_{n,s,q}\)</span></div>
+  <p>未训练 selector 的 path 与冻结 DFlash top-1 相同。训练还记录 candidate coverage、teacher accuracy、base accuracy、fixed-base-error（base 错而 selector 对）和 regressed-base-correct（base 对而 selector 错）。</p>
+  <p>最终入口是 <code>eval_final_acceptance.py</code>。baseline 和 selector 分别推进自己的多轮 context，每轮连续接受 \(m_r\) 个 proposal；核心字段是 <code>mean_target_accepted_draft_tokens_per_round</code>：</p>
+  <div class="math-block"><span class="math-line">\(\mathrm{EAL}_{\mathrm{round}}=\frac{1}{R}\sum_{r=1}^{R}m_r,\qquad m_r=\max\{j:\hat y_{r,1:j}=y^{\mathrm{target}}_{r,1:j}\}\)</span></div>
+  <p><code>mean_committed_tokens</code> 约等于 \(m+1\)，包含 target 在拒绝位置产生的 bonus token；本页核心表格均使用不含 bonus 的 EAL。</p>
+</section>
+<section id="versions"><h2>6. 有意义的实验版本</h2>
+  <p>以下按“是否能用于当前算法结论”分类。早期结果即使数值很高，也不能与当前官方一致实现直接横向比较。</p>
+  <table><caption>表 2. 版本、数据流和证据等级</caption><thead><tr><th>版本</th><th>数据流 / loss</th><th>结果定位</th></tr></thead><tbody>
+    <tr><td>早期 standalone 2k–5k、top-k 16/24/32/48/64</td><td>独立 <code>CandidatePathRefiner</code>；显式 teacher predecessor；候选内 CE；部分使用 <code>lr=0.01</code>。早期评测曾把 anchor/slot 对齐处理错误。</td><td>诊断性证据：扩大 top-k 提高 coverage 和候选内可修复空间；不能作为当前 Speculators 最终收益。</td></tr>
+    <tr><td>对齐修复后的 5k、lr=0.01</td><td>anchor 正确占 slot 0，15 个 proposal；top-k 16/64；逐样本 AdamW 学习率过大，训练后段 loss 上升。</td><td>失败诊断：slot 对齐虽必要，但高学习率会破坏首 slot，真实接受长度显著下降。</td></tr>
+    <tr><td>5k、top-k=64、lr=1e-4、roll-in=0.5</td><td>一半 batch 使用真实 target predecessor，一半使用 selector rollout predecessor；位置权重 \(0.8^s\)。</td><td>有意义对照：GSM8K 512 条上正收益，但弱于纯 teacher forcing。</td></tr>
+    <tr><td><strong>5k、top-k=64、lr=1e-4、纯 teacher forcing</strong></td><td>anchor + 15 proposal；\(P^{\mathrm{TF}}=[a,y_1,\ldots,y_{14}]\)；只在 target 位于候选时做加权 CE。</td><td><strong>首个稳定有效版本</strong>：GSM8K 512 条 paired full-round 为 +0.0481；跨数据集方向多为正。</td></tr>
+    <tr><td>30k、top-k=64、lr=1e-4、all-predecessor、1 epoch</td><td>完整 edge scores 的 64 个 predecessor rows 都复制监督同一个 target；位置衰减仍为 \(0.8^s\)。</td><td>不推荐：7 集中有正有负，监督条件与推理 path walk 不完全匹配。</td></tr>
+    <tr><td><strong>30k、top-k=64、lr=1e-4、纯 teacher forcing、1 epoch</strong></td><td>每个 slot 只用一个真实 predecessor；候选 graph 按官方 edge scoring 构造；rank=16；target/DFlash 全冻结。</td><td><strong>当前最佳有效 checkpoint</strong>：7 个评测集均正收益，是 5-epoch 实验的公平对照。</td></tr>
+    <tr><td>30k、纯 teacher forcing、5 epochs</td><td>与上一版本完全相同，仅 epoch 数改为 5；每个 epoch 独立保存。</td><td>当前进行中；待 output/0–4 和 full-round 评测完成后判断是否过拟合。</td></tr>
+  </tbody></table>
+  <h3>6.1 早期 top-k 数值：为什么只作诊断</h3>
+  <p>早期 standalone 脚本在严格 held-out 区间观察到明显的候选覆盖效应：第 3500–4499 条样本上，top-k=24 的旧单块 EAL 为 0.95（相对 base +0.901，coverage 0.670），top-k=32 为 1.16（+1.111，0.724），top-k=48 为 1.481（+1.432，0.786），top-k=64 为 1.575（+1.526，0.821）；第 4000–4999 条中 top-k=64 为 1.551（+1.496，0.812）。这些数字说明候选集合越大，target token 越容易落入可重排集合，但它们使用了旧的单块 evaluator，且部分运行在 anchor/slot 对齐修复之前。因此它们只能支持“candidate coverage 是上限”这一诊断，不能和当前 full-round EAL 直接比较。</p>
+  <p>对齐修复后使用 <code>lr=0.01</code> 的 5k 训练也不应作为正负收益基线：top-k=16 在 GSM8K 128 条上从 base 3.26520 降到 1.54333，top-k=64 降到 1.92212；训练日志同时显示后段 loss 上升。该实验的价值是隔离出高学习率和首 slot 回退问题，而不是证明 selector 结构不可行。</p>
+</section>
+<section id="results"><h2>7. 真实 round 结果</h2>
+  <h3>7.1 5k 四组训练对照（GSM8K 前 512 条）</h3>
+  <p>四组共享 baseline：15,232 个 verification rounds，baseline 平均 target 接受 draft 长度为 3.330226。所有 selector 都是完整多轮 greedy speculative decoding。</p>
+  <table><caption>表 3. 学习率与 predecessor 策略对照</caption><thead><tr><th>配置</th><th>Selector EAL</th><th>Δ EAL</th><th>首 slot Δ</th><th>paired bootstrap 95% CI</th></tr></thead><tbody>
+    <tr><td>lr=3e-5，teacher</td><td>3.331604</td><td>+0.001378</td><td>−0.11 pp</td><td>[−0.01216, +0.01685]</td></tr>
+    <tr><td>lr=3e-5，roll-in 0.5</td><td>3.328258</td><td>−0.001968</td><td>−0.05 pp</td><td>[−0.01457, +0.01298]</td></tr>
+    <tr><td><strong>lr=1e-4，teacher</strong></td><td><strong>3.378294</strong></td><td><strong>+0.048068</strong></td><td><strong>+0.22 pp</strong></td><td><strong>[+0.03054, +0.08571]</strong></td></tr>
+    <tr><td>lr=1e-4，roll-in 0.5</td><td>3.342882</td><td>+0.012656</td><td>+0.20 pp</td><td>[−0.00312, +0.04704]</td></tr>
+  </tbody></table>
+  <h3>7.2 5k teacher-forced 版本跨数据集复核</h3>
+  <table><caption>表 4. 完整多轮 greedy 评测；max new tokens=128</caption><thead><tr><th>数据集</th><th>样本</th><th>Base EAL</th><th>Selector EAL</th><th>Δ</th><th>结论</th></tr></thead><tbody>
+    <tr><td>GSM8K</td><td>1319</td><td>3.331744</td><td>3.379954</td><td>+0.048210</td><td>明确正；CI [+0.03663,+0.07109]</td></tr>
+    <tr><td>MATH-500</td><td>500</td><td>4.519966</td><td>4.624116</td><td>+0.104150</td><td>明确正；CI [+0.06742,+0.16195]</td></tr>
+    <tr><td>MBPP</td><td>257</td><td>3.675798</td><td>3.722437</td><td>+0.046639</td><td>方向正，CI 跨零</td></tr>
+    <tr><td>HumanEval</td><td>164</td><td>3.527546</td><td>3.568462</td><td>+0.040916</td><td>方向正，CI 跨零</td></tr>
+    <tr><td>MT-Bench</td><td>80</td><td>1.993673</td><td>2.012098</td><td>+0.018425</td><td>方向正，样本少</td></tr>
+    <tr><td>LiveCodeBench</td><td>1055</td><td>4.044224</td><td>4.037325</td><td>−0.006899</td><td>近似持平，轻微负</td></tr>
+  </tbody></table>
+  <h3>7.3 30k 一 epoch：all-predecessor 与 teacher-forced</h3>
+  <table><caption>表 5. full-round 结果；AIME25 30 条、MT-Bench 80 条，其余 128 条</caption><thead><tr><th>数据集</th><th>Base</th><th>All-predecessor</th><th>All Δ</th><th>Teacher-forced</th><th>Teacher Δ</th></tr></thead><tbody>
+    <tr><td>GSM8K</td><td>3.26520</td><td>3.32398</td><td>+0.05878</td><td>3.54535</td><td><strong>+0.28015</strong></td></tr>
+    <tr><td>Math500</td><td>4.53322</td><td>4.53880</td><td>+0.00558</td><td>4.80155</td><td><strong>+0.26833</strong></td></tr>
+    <tr><td>AIME25</td><td>4.70206</td><td>4.58671</td><td>−0.11536</td><td>4.83837</td><td><strong>+0.13630</strong></td></tr>
+    <tr><td>HumanEval</td><td>3.54731</td><td>3.60419</td><td>+0.05688</td><td>3.77244</td><td><strong>+0.22513</strong></td></tr>
+    <tr><td>MBPP</td><td>3.67591</td><td>3.67963</td><td>+0.00373</td><td>3.91704</td><td><strong>+0.24113</strong></td></tr>
+    <tr><td>MT-Bench</td><td>1.99367</td><td>1.98737</td><td>−0.00631</td><td>2.04440</td><td><strong>+0.05073</strong></td></tr>
+    <tr><td>LiveCodeBench</td><td>4.13709</td><td>4.12373</td><td>−0.01336</td><td>4.16197</td><td><strong>+0.02488</strong></td></tr>
+  </tbody></table>
+  <p>这张表的主要差异是 loss 是否对每个 predecessor row 重复监督；teacher-forced 版本在全部 7 个数据集上转为正收益，支持监督条件应与推理路径条件一致的判断。</p>
+</section>
+<section id="lessons"><h2>8. 结论与限制</h2>
+  <ol>
+    <li>当前最可信的正收益不是早期高 EAL 数字，而是 anchor 对齐后、top-k=64、lr=1e-4、teacher-forced loss、full-round evaluator 得到的结果。</li>
+    <li>top-k 决定候选覆盖上限；候选多不等于路径排序正确。早期 top-k 实验主要用于证明候选覆盖瓶颈。</li>
+    <li>teacher-forced loss 的关键是每个 slot 只在一个明确的 target predecessor 条件下监督一个候选排名；all-predecessor loss 把多个不同条件混成了同一标签。</li>
+    <li>位置衰减 \(0.8^s\) 体现前部接受的重要性，但它仍是 surrogate objective；最终必须检查每轮 target accepted draft tokens，以及 fixed/regressed 诊断。</li>
+    <li>5 epoch 可能继续降低训练 loss，也可能在训练轨迹上过拟合并损害真实 path walk。只有 output/0–4 都评测后，才能判断最佳 epoch。</li>
+  </ol>
+  <p class="note">当前 5-epoch run 尚未完成，页面中的 5-epoch 行只记录配置和状态。后续评测脚本会分别输出每个 epoch 的 candidate coverage、首 slot acceptance、全 round EAL、fixed-base-error 和 regressed-base-correct。</p>
+</section>
+<section id="sources" class="references"><h2>原始记录与代码</h2><ol>
+  <li><a href="https://github.com/mokomoko05/dLLMSpec/tree/main/agentWorkSpace/20260901_dflash2_path_selector_refiner">独立实验工作区、训练/评测脚本和 EXPERIMENT_LOG</a></li>
+  <li><a href="https://github.com/mokomoko05/dLLMSpec/blob/main/implementations/speculators/src/speculators/models/dflash_selector/core.py"><code>DFlashSelectorDraftModel</code>、edge scoring、teacher-forced loss 与 inference path</a></li>
+  <li><a href="https://github.com/mokomoko05/dLLMSpec/blob/main/implementations/speculators/src/speculators/models/dflash/core.py"><code>DFlashDraftModel._backbone_forward</code>：anchor block、target 对齐和 slot-0 mask</a></li>
+  <li><a href="https://inco.ai/blog/dflash2/">DFlash2 官方 path selector 说明</a></li>
+  <li><a href="https://github.com/vllm-project/vllm/blob/3406ec1dae9916f920b90f0dbf90dcf54923d042/vllm/v1/worker/gpu/spec_decode/dflash2/speculator.py">vLLM DFlash2 selector walk 参考实现</a></li>
+</ol></section>
+</article></main>
+<footer class="page-footer"><span>DFlash2 Path Selector 训练 · 2026-09-03</span><a href="../">返回内容目录</a></footer>
+</body>
+</html>

@@ -1,0 +1,10 @@
+@import url("../dflash-multistep/styles.css");
+
+.article-header h1 { max-width: 7.1in; }
+table { font-size: 8.2pt; }
+th, td { padding: 4pt 5pt; }
+.math-block { white-space: normal; }
+.math-block .math-line { overflow-x: auto; }
+@media print {
+  .top-nav, .page-footer { display: none; }
+}

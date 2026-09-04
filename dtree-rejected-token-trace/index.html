@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Qwen3-8B DDTree 与 DARTree 在六个数据集上的 rejected token 树覆盖、top-k 覆盖和错误父节点 trace 统计。">
+<title>DDTree / DARTree rejected-token trace 多数据集统计</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<nav class="top-nav" aria-label="站点导航"><a href="../">← 内容目录</a><span>dLLMSpec 实验报告</span></nav>
+<main><article>
+<header class="article-header">
+<h1>DDTree / DARTree rejected-token trace 多数据集统计</h1>
+<p class="subtitle">Target token 未被树接受时的候选覆盖、树预算遗漏与父节点错误分析</p>
+<dl class="article-meta">
+<div><dt>实验时间</dt><dd>2026-09-04</dd></div>
+<div><dt>硬件</dt><dd>单张 NVIDIA A100 80GB</dd></div>
+<div><dt>Target</dt><dd>Qwen3-8B</dd></div>
+<div><dt>状态</dt><dd>六数据集、两种树方法完成</dd></div>
+<div><dt>固定代码</dt><dd><code>c717e5f</code></dd></div>
+</dl>
+</header>
+
+<section class="abstract"><h2>摘要</h2>
+<p>本实验记录 speculative decoding 的 tree verification 中，target model 产生的 token 为什么没有沿当前已接受前缀被接受。对每个 verification round，只记录第一个真正不匹配的 target token；如果路径走到叶子，target 在叶子之后产生的是 bonus token，不属于被拒绝的 draft token，因而不计入 rejected 分母。</p>
+<p>结果显示，六个数据集上最常见的是“target token 在 draft 的位置 top-k 中，但最终树没有把它挂到当前路径”（类别 1.1）。DDTree 还经常出现 token 已在树中但父节点错误（类别 2）；DARTree 的错误父节点比例整体较低，但 Alpaca 上 token 不在 top-k 的比例明显升高。</p>
+</section>
+
+<nav class="toc"><h2>目录</h2><ol>
+<li><a href="#question">问题与分类</a></li><li><a href="#dataflow">数据流</a></li><li><a href="#implementation">代码实现</a></li><li><a href="#results">多数据集结果</a></li><li><a href="#interpretation">结果解读</a></li><li><a href="#reproduce">复现与限制</a></li>
+</ol></nav>
+
+<section id="question"><h2>1. 问题与分类</h2>
+<p>设当前已确认前缀为 <code>P</code>，当前 round 的树根为 anchor，target verification 从已接受路径的最后节点 <code>p</code> 继续。若 target 在位置 <code>p</code> 给出 token <code>y</code>，但 <code>y</code> 不是 <code>p</code> 的 child，则记录一次 rejected token。令 <code>d(p)</code> 为父节点深度，<code>C<sub>d</sub></code> 为 draft 在对应位置的候选 top-k，<code>T<sub>d+1</sub></code> 为最终树在下一深度的节点集合。</p>
+<div class="math-block"><span class="math-line">1.1: y ∈ C<sub>d</sub> 且 y ∉ T<sub>d+1</sub>（候选有，但树省略）</span><span class="math-line">1.2: y ∉ C<sub>d</sub>（候选 top-k 未覆盖）</span><span class="math-line">2: y ∈ T<sub>d+1</sub>，但 parent(y) ≠ p（树中存在，父节点错误）</span></div>
+<p>分类优先级为 2 → 1.1 → 1.2：如果同一深度已有相同 token，即使它也在候选 top-k 中，也判为错误父节点，因为此时首要问题是路径挂载位置。统计使用 token id，而非字符串，避免空格和特殊 token 解码造成歧义。</p>
+</section>
+
+<section id="dataflow"><h2>2. 数据流</h2>
+<figure class="flow-figure" aria-label="rejected token trace 数据流"><div class="flow-stack">
+<div class="flow-node"><strong>已确认 target 前缀</strong><span>target KV cache 只包含上一轮提交的 token；当前 block 的根是 anchor。</span></div>
+<div class="flow-node accent"><strong>一次 draft forward</strong><span>DDTree 使用 DFlash logits；DARTree 使用 Domino drafter 的并行 logits，得到各 draft slot 的候选。</span></div>
+<div class="flow-node"><strong>构造最终树</strong><span>DDTree 取每 slot top-k 后按路径分数和节点预算建树；DARTree 先用 path scorer 打分，再裁剪 supertree。</span></div>
+<div class="flow-node accent"><strong>一次 target tree verification</strong><span>树 attention 只允许节点看到 anchor/祖先；target 对所有树节点并行计算 posterior。</span></div>
+<div class="flow-node"><strong>沿 child map 行走</strong><span>从 root 开始，连续匹配 target posterior；第一个不在当前父节点 child map 的 token 是 rejected token。</span></div>
+<div class="flow-node result"><strong>记录并提交</strong><span>记录类别、生成位置、树深度、候选 top-k、同深度节点及其父节点；提交 accepted path 和 target bonus。</span></div>
+</div><figcaption>图 1. Trace 记录发生在 verifier walk 的第一个 mismatch 处，而不是 draft argmax 产生处。</figcaption></figure>
+<h3>2.1 位置与深度</h3>
+<p><code>generated_position</code> 是相对于回答起点的 0-based 位置：<code>absolute_position − prompt_length</code>。<code>tree_depth</code> 是从树根之后开始计数的 1-based 深度。最后一个候选 block 可能超过请求的最大生成长度，位置不小于 <code>max_new_tokens</code> 的记录已过滤。</p>
+</section>
+
+<section id="implementation"><h2>3. 代码实现</h2>
+<p>固定实现位于 dLLMSpec commit <code>c717e5f</code>（分支 <code>exp/dtree-rejected-token-trace-20260904</code>，已推送到 origin）。DDTree 的分类器在 <code>agentWorkSpace/20260826_ddtree_official_reproduction/upstream/ddtree.py</code>，DARTree 的分类器在 <code>agentWorkSpace/20260823_dartree_reproduction/upstream/eval_dartree.py</code>。两处都实现同一优先级和字段 schema。</p>
+<ol><li><code>follow_verified_tree</code> 从 root 逐节点读取 target posterior，返回最长 accepted index path。</li><li><code>classify_rejected_token</code> 读取 accepted path 最后节点，检查 child map、同深度 token、对应 draft candidate top-k，并生成类别。</li><li>每轮 trace 记录 <code>node_token_ids</code>、<code>node_depths</code>、<code>parents</code> 和 <code>accepted_indices</code>，使分类可离线审计。</li><li><code>analyze_rejected_token_trace.py</code> 按 method/dataset、generated position 和 tree depth 计算 count 与百分比。</li></ol>
+<div class="math-block"><span class="math-line">s(y<sub>1:i</sub>) = Σ<sub>j=1…i</sub> log softmax(z<sub>j</sub>)[y<sub>j</sub>]</span><span class="math-line">τ = accepted draft tokens + 1 target bonus（本页不把 τ 当 rejected 分母）</span><span class="math-line">percentage(category) = count(category) / Σ<sub>c∈{1.1,1.2,2}</sub> count(c)</span></div>
+<p>其中 <code>z<sub>j</sub></code> 是 draft 在第 <code>j</code> 个 slot 的 vocabulary logits。上式的路径分数解释了 DDTree 的 best-first 选择；DARTree 的 path scorer 也使用路径条件进行候选排序，但最终分类只依赖实际构造的 parent/token 关系。</p>
+</section>
+
+<section id="results"><h2>4. 多数据集结果</h2>
+<p>Target 和 drafter 均为 8B 配对。每个数据集最多 32 条样本（AIME25 只有 30 条），每条最多生成 256 token，temperature 0，block size 16，tree budget 64。表中 rejected 数是所有样本首个 mismatch 的总数；百分比是该方法、该数据集内部三类 rejected 的构成。</p>
+<table><caption>表 1. 8B DDTree/DARTree rejected-token 分类</caption><thead><tr><th>数据集</th><th>样本</th><th>DDTree rejected</th><th>DDTree：1.1 / 1.2 / 2</th><th>DARTree rejected</th><th>DARTree：1.1 / 1.2 / 2</th></tr></thead><tbody>
+<tr><td>GSM8K</td><td>32</td><td>499</td><td>64.33% / 3.81% / 31.86%</td><td>223</td><td>79.37% / 13.00% / 7.62%</td></tr>
+<tr><td>MATH-500</td><td>32</td><td>347</td><td>59.94% / 2.88% / 37.18%</td><td>309</td><td>77.35% / 12.30% / 10.36%</td></tr>
+<tr><td>AIME25</td><td>30</td><td>312</td><td>65.06% / 0.32% / 34.62%</td><td>362</td><td>77.07% / 11.05% / 11.88%</td></tr>
+<tr><td>Alpaca</td><td>32</td><td>693</td><td>60.89% / 17.60% / 21.50%</td><td>538</td><td>62.83% / 23.79% / 13.38%</td></tr>
+<tr><td>HumanEval</td><td>32</td><td>404</td><td>69.80% / 2.48% / 27.72%</td><td>404</td><td>72.52% / 14.60% / 12.87%</td></tr>
+<tr><td>MBPP</td><td>32</td><td>481</td><td>70.06% / 2.70% / 27.23%</td><td>326</td><td>67.48% / 15.95% / 16.56%</td></tr>
+</tbody></table>
+<p class="note"><strong>不要把 rejected 数当作接受长度。</strong> rejected 数受生成长度、验证轮数和 EOS 影响；它表示发生了多少次首个 mismatch。若要衡量速度或 speculative decoding 质量，还需结合每轮 accepted length、总输出 token 和 target verification 时间。</p>
+</section>
+
+<section id="interpretation"><h2>5. 结果解读</h2>
+<h3>5.1 主要瓶颈是树保留和父节点</h3>
+<p>DDTree 在所有数据集上 1.1 占 59.94%–70.06%，错误父节点占 21.50%–37.18%。这说明 target token 很多时候已经在 draft 的候选 top-k 中，损失来自全局节点预算、best-first 路径选择或分支挂载，而不是 draft 完全没有提出该 token。单纯增大 top-k 对这部分问题帮助有限；应优先分析预算分配和 prefix-consistent parent selection。</p>
+<h3>5.2 DARTree 减少错误父节点，但不保证候选覆盖</h3>
+<p>DARTree 的错误父节点比例通常低于 DDTree，例如 GSM8K 为 7.62% 对 31.86%，MATH-500 为 10.36% 对 37.18%。这与 path scorer 显式按路径打分、再进行 supertree pruning 的结构一致：保留下来的节点更少出现明显错误挂载。不过 DARTree 的 1.2 通常高于 DDTree，说明 path selection 改善了路径组织，却不能解决 candidate vocabulary 本身没有 target token 的情况。</p>
+<h3>5.3 Alpaca 是候选覆盖困难的数据集</h3>
+<p>Alpaca 的 1.2 比例最高或接近最高：DDTree 17.60%，DARTree 23.79%；而数学和代码数据集的 DDTree 1.2 多数低于 3%。开放式指令回答的 token 分布更分散，固定 candidate top-k 更容易漏掉 target。对 Alpaca 类数据，应单独测试更大的候选词表、按位置自适应的 top-k，或让候选预算随不确定性增加。</p>
+<h3>5.4 下一步实验</h3>
+<ol><li>固定 tree budget，扫描 candidate top-k，观察 1.2 是否转化为 1.1/接受。</li><li>固定 candidate top-k，扫描 DDTree 的节点预算和 DARTree supertree width，观察 1.1 与 2 的变化。</li><li>按 generated position 汇总，区分回答开头的前缀错误和长回答后部的路径漂移。</li><li>把 rejected 分类与真实 EAL（每轮 target 接受长度）配对，判断减少哪一类 mismatch 最能提高最终接受长度。</li></ol>
+</section>
+
+<section id="reproduce"><h2>6. 复现与限制</h2>
+<p>代码固定 commit 为 <code>c717e5f</code>。在已有本地 Hugging Face 数据集缓存的节点上执行：</p>
+<pre><code>export HF_DATASETS_OFFLINE=1
+bash agentWorkSpace/20260904_dtree_rejected_token_trace/run_multidataset_trace.sh
+python agentWorkSpace/20260904_dtree_rejected_token_trace/analyze_rejected_token_trace.py \
+  agentWorkSpace/20260904_dtree_rejected_token_trace/traces/multidataset_8b_32x256/*_ddtree.json \
+  agentWorkSpace/20260904_dtree_rejected_token_trace/traces/multidataset_8b_32x256/*_dartree.json \
+  --output agentWorkSpace/20260904_dtree_rejected_token_trace/traces/multidataset_8b_32x256/summary.json</code></pre>
+<p>本次提交包含聚合 summary，不包含逐轮原始 trace 和日志；原始文件保留在共享盘的同名实验目录。数据集抽样由 loader 先按 seed 0 shuffle，再取前 32 条；AIME25 的数据集总量只有 30 条。统计只分析 greedy（temperature 0）路径，不能直接外推到 sampling decoding。</p>
+<p>代码测试为 <code>1 passed</code>。DDTree 和 DARTree 使用不同 drafter 架构和树构造流程，因此表中比例适合分别诊断各自瓶颈，不应被解释为完全控制变量的算法优劣排名。</p>
+</section>
+
+<section class="references"><h2>原始记录</h2><ol>
+<li><a href="https://github.com/mokomoko05/dLLMSpec/tree/exp/dtree-rejected-token-trace-20260904/agentWorkSpace/20260904_dtree_rejected_token_trace">固定实验分支：collector、analyzer、测试和 summary</a></li>
+<li><a href="https://github.com/mokomoko05/dLLMSpec/commit/c717e5f">固定代码 commit c717e5f</a></li>
+<li><a href="https://github.com/mokomoko05/dLLMSpec/blob/exp/dtree-rejected-token-trace-20260904/agentWorkSpace/20260826_ddtree_official_reproduction/upstream/ddtree.py">DDTree evaluator trace 修改</a></li>
+<li><a href="https://github.com/mokomoko05/dLLMSpec/blob/exp/dtree-rejected-token-trace-20260904/agentWorkSpace/20260823_dartree_reproduction/upstream/eval_dartree.py">DARTree evaluator trace 修改</a></li>
+</ol></section>
+</article></main>
+<footer class="page-footer"><span>DDTree / DARTree rejected-token trace · 2026-09-04</span><a href="../">返回内容目录</a></footer>
+</body></html>

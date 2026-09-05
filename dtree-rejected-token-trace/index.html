@@ -58,6 +58,7 @@
 
 <section id="results"><h2>4. 多数据集结果</h2>
 <p>Target 和 drafter 均为 8B 配对。每个数据集最多 32 条样本（AIME25 只有 30 条），每条最多生成 256 token，temperature 0，block size 16，tree budget 64。表中 rejected 数是所有样本首个 mismatch 的总数；百分比是该方法、该数据集内部三类 rejected 的构成。</p>
+<p class="note">早期 GSM8K smoke 曾使用 4B Domino 进行链路调试；本页正式表格全部来自后续下载的 Qwen3-8B Domino 与配套 Qwen3-8B target，4B smoke 不纳入统计。</p>
 <table><caption>表 1. 8B DDTree/DARTree rejected-token 分类</caption><thead><tr><th>数据集</th><th>样本</th><th>DDTree rejected</th><th>DDTree：1.1 / 1.2 / 2</th><th>DARTree rejected</th><th>DARTree：1.1 / 1.2 / 2</th></tr></thead><tbody>
 <tr><td>GSM8K</td><td>32</td><td>499</td><td>64.33% / 3.81% / 31.86%</td><td>223</td><td>79.37% / 13.00% / 7.62%</td></tr>
 <tr><td>MATH-500</td><td>32</td><td>347</td><td>59.94% / 2.88% / 37.18%</td><td>309</td><td>77.35% / 12.30% / 10.36%</td></tr>

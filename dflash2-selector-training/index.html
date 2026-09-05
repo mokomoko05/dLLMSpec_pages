@@ -16,8 +16,8 @@
   <h1>DFlash2 Path Selector 训练实验进展</h1>
   <p class="subtitle">从早期独立候选重排，到 Speculators 中与 DFlash2 推理路径一致的训练</p>
   <dl class="article-meta">
-    <div><dt>报告时间</dt><dd>2026-09-03</dd></div>
-    <div><dt>当前训练</dt><dd>30k non-thinking × 5 epochs，进行中</dd></div>
+    <div><dt>报告时间</dt><dd>2026-09-05</dd></div>
+    <div><dt>当前状态</dt><dd>30k non-thinking × 5 epochs 与七数据集评测已完成</dd></div>
     <div><dt>模型</dt><dd>Qwen3-8B target / DFlash block-16</dd></div>
     <div><dt>硬件</dt><dd>4 × NVIDIA A100 80GB PCIe</dd></div>
   </dl>
@@ -25,7 +25,7 @@
 <section class="abstract" aria-labelledby="abstract-title">
   <h2 id="abstract-title">摘要</h2>
   <p>本页只讨论 DFlash2 风格的 <strong>path selector</strong>：它不生成词表外的新 token，而是在 DFlash 每个 proposal 槽位的 top-<var>K</var> 候选中重新选择一条连贯路径。selector 的可训练参数是隐藏状态投影、前驱 token codebook 和后继 token codebook；Qwen3-8B target 与原始 DFlash backbone 始终冻结。</p>
-  <p>最重要的有效版本是 5k non-thinking、<code>lr=1e-4</code>、纯 teacher forcing 的 top-<var>K=64</var> 训练，以及其 30k、1 epoch 扩展。前者在 GSM8K 512 条 paired full-round 评测中每轮 target 接受长度增加 <strong>0.0481</strong> token，并在 GSM8K、MATH-500、MBPP、HumanEval、MT-Bench 上方向为正；后者在 7 个数据集、每集最多 128 条的评测中全部为正，GSM8K 增加 <strong>0.2802</strong>、MATH-500 增加 <strong>0.2683</strong> 个 target 接受 draft token。当前 30k×5 epoch run 尚未完成，不能提前把这些数字归因于新 epoch。</p>
+  <p>最重要的有效版本是 5k non-thinking、<code>lr=1e-4</code>、纯 teacher forcing 的 top-<var>K=64</var> 训练，以及其 30k、1 epoch 扩展。前者在 GSM8K 512 条 paired full-round 评测中每轮 target 接受长度增加 <strong>0.0481</strong> token；后者在 7 个数据集、每集最多 128 条的评测中全部为正，GSM8K 增加 <strong>0.2802</strong>、MATH-500 增加 <strong>0.2683</strong> 个 target 接受 draft token。随后独立重启的 30k×5 epoch 训练也已完成：GSM8K 在 epoch 3 达到 +0.4686，epoch 4 回落到 +0.4580；其余数据集的 epoch 3/4 差异较小，说明继续训练的收益已进入平台区，不能简单把最后一个 epoch 当作全局最佳。</p>
   <p class="note">“接受长度”统一指一次 verification round 中 target 实际接受的连续 draft token 数，不包含 target bonus token；它不是最终答案准确率，也不是离线 validation loss。</p>
 </section>
 <nav class="toc" aria-labelledby="toc-title"><h2 id="toc-title">目录</h2><ol>
@@ -35,14 +35,13 @@
   <li><a href="#results">真实 round 结果</a></li><li><a href="#lessons">结论与限制</a></li><li><a href="#sources">代码与原始记录</a></li>
 </ol></nav>
 <section id="status"><h2>1. 当前进展</h2>
-  <p>当前 run 是 <code>agentWorkSpace/20260901_dflash2_path_selector_refiner/runs/20260903_5epoch_teacher_forced_30k_4gpu</code>。它从 selector 初始权重重新开始，而不是从已结束的 1-epoch 最终 checkpoint 续训；原因是 1-epoch cosine scheduler 已把学习率降到接近零，直接续训不能代表公平的第二 epoch。</p>
-  <table><caption>表 1. 2026-09-03 21:40 检查快照</caption><tbody>
-    <tr><th>训练进度</th><td>日志显示 <code>epoch=2</code>（第三个 epoch，0-based），<code>global_step=5120</code>；约 2550 steps/epoch，总计约 12,750 steps。</td></tr>
-    <tr><th>batch 诊断</th><td>最近 selector candidate coverage 约 0.848–0.891，teacher accuracy 约 0.314–0.409，base accuracy 约 0.329–0.422；这是训练 batch 统计，不是 test 接受长度。</td></tr>
-    <tr><th>GPU</th><td>GPU0 运行 hidden-state server，GPU1–3 训练 worker；检查时 GPU0 利用率约 88%，GPU1–3 约 100%。</td></tr>
-    <tr><th>checkpoint</th><td>目前已保存 <code>output/0</code> 和 <code>output/1</code>；第三个 epoch 正在写入，成功结束后预期生成 <code>output/0</code> 至 <code>output/4</code>。</td></tr>
-    <tr><th>评测</th><td>等待器已启动，训练正常退出后逐个 epoch 测试 GSM8K、Math500、AIME25、HumanEval、MBPP、MT-Bench、LiveCodeBench 的 <code>mean_target_accepted_draft_tokens_per_round</code>。</td></tr>
-    <tr><th>磁盘</th><td>共享盘约 71 GiB 可用；checkpoint 只保存 selector 轻量参数，不复制 Qwen3/DFlash backbone。</td></tr>
+  <p>30k×5 run 使用独立初始化，而不是从 1-epoch checkpoint 续训；原因是 1-epoch cosine scheduler 已把学习率降到接近零，直接续训不能代表公平的多 epoch 对照。训练目录为 <code>agentWorkSpace/20260901_dflash2_path_selector_refiner/runs/20260903_5epoch_teacher_forced_30k_4gpu</code>，逐 epoch checkpoint 和评测结果汇总在 <code>runs/20260904_official_protocol_multidata_preemptive</code>。</p>
+  <table><caption>表 1. 当前状态（2026-09-05）</caption><tbody>
+    <tr><th>训练</th><td>30k non-thinking、top-k=64、纯 teacher forcing、lr=1e-4，5 个 epoch 已正常结束。</td></tr>
+    <tr><th>评测</th><td>GSM8K、MATH-500、AIME25、HumanEval、MBPP、MT-Bench、LiveCodeBench 的 epoch 0–4 full-round 评测全部完成，所有任务退出码为 0。</td></tr>
+    <tr><th>核心指标</th><td>使用 <code>mean_target_accepted_draft_tokens_per_round</code>，不含 target bonus；GSM8K 的 epoch 3 最好，epoch 4 略回落。</td></tr>
+    <tr><th>80k 扩展</th><td>已追加 50k 条 non-thinking target 轨迹并与原 30k 合并为 80,000 行；训练尚未启动。首个 launcher 因未定义 <code>CUDA_HOME</code> 退出，retry watcher 还引用了不存在的 <code>validate_output.py</code>，因此没有 80k checkpoint 或收益结论。</td></tr>
+    <tr><th>checkpoint / 磁盘</th><td>checkpoint 只保存 selector 轻量参数，不复制 Qwen3/DFlash backbone；80k 数据与失败日志仍保留，启动训练前需先修复 launcher 依赖并复核磁盘。</td></tr>
   </tbody></table>
 </section>
 <section id="terminology"><h2>2. 术语与实验边界</h2>
@@ -134,7 +133,7 @@
     <tr><td><strong>5k、top-k=64、lr=1e-4、纯 teacher forcing</strong></td><td>anchor + 15 proposal；\(P^{\mathrm{TF}}=[a,y_1,\ldots,y_{14}]\)；只在 target 位于候选时做加权 CE。</td><td><strong>首个稳定有效版本</strong>：GSM8K 512 条 paired full-round 为 +0.0481；跨数据集方向多为正。</td></tr>
     <tr><td>30k、top-k=64、lr=1e-4、all-predecessor、1 epoch</td><td>完整 edge scores 的 64 个 predecessor rows 都复制监督同一个 target；位置衰减仍为 \(0.8^s\)。</td><td>不推荐：7 集中有正有负，监督条件与推理 path walk 不完全匹配。</td></tr>
     <tr><td><strong>30k、top-k=64、lr=1e-4、纯 teacher forcing、1 epoch</strong></td><td>每个 slot 只用一个真实 predecessor；候选 graph 按官方 edge scoring 构造；rank=16；target/DFlash 全冻结。</td><td><strong>当前最佳有效 checkpoint</strong>：7 个评测集均正收益，是 5-epoch 实验的公平对照。</td></tr>
-    <tr><td>30k、纯 teacher forcing、5 epochs</td><td>与上一版本完全相同，仅 epoch 数改为 5；每个 epoch 独立保存。</td><td>当前进行中；待 output/0–4 和 full-round 评测完成后判断是否过拟合。</td></tr>
+    <tr><td>30k、纯 teacher forcing、5 epochs</td><td>与上一版本完全相同，仅 epoch 数改为 5；每个 epoch 独立保存并按官方 full-round evaluator 复核。</td><td><strong>已完成：</strong>七个数据集均为正收益；GSM8K 在 epoch 3 最好，epoch 4 略回落，其余数据集 epoch 3/4 基本平台。</td></tr>
   </tbody></table>
   <h3>6.1 早期 top-k 数值：为什么只作诊断</h3>
   <p>早期 standalone 脚本在严格 held-out 区间观察到明显的候选覆盖效应：第 3500–4499 条样本上，top-k=24 的旧单块 EAL 为 0.95（相对 base +0.901，coverage 0.670），top-k=32 为 1.16（+1.111，0.724），top-k=48 为 1.481（+1.432，0.786），top-k=64 为 1.575（+1.526，0.821）；第 4000–4999 条中 top-k=64 为 1.551（+1.496，0.812）。这些数字说明候选集合越大，target token 越容易落入可重排集合，但它们使用了旧的单块 evaluator，且部分运行在 anchor/slot 对齐修复之前。因此它们只能支持“candidate coverage 是上限”这一诊断，不能和当前 full-round EAL 直接比较。</p>
@@ -169,6 +168,18 @@
     <tr><td>LiveCodeBench</td><td>4.13709</td><td>4.12373</td><td>−0.01336</td><td>4.16197</td><td><strong>+0.02488</strong></td></tr>
   </tbody></table>
   <p>这张表的主要差异是 loss 是否对每个 predecessor row 重复监督；teacher-forced 版本在全部 7 个数据集上转为正收益，支持监督条件应与推理路径条件一致的判断。</p>
+  <h3>7.4 30k×5 epoch 趋势</h3>
+  <p>下表为每个 checkpoint 相对冻结 baseline 的 EAL 增量；GSM8K 使用 128 条，AIME25 使用 30 条，其余数据集使用 80 或 128 条，均为相同 prompt、相同 greedy full-round 口径。</p>
+  <table><caption>表 6. 五个 epoch 的 target 接受 draft token 增量</caption><thead><tr><th>数据集</th><th>epoch 0</th><th>epoch 1</th><th>epoch 2</th><th>epoch 3</th><th>epoch 4</th></tr></thead><tbody>
+    <tr><td>GSM8K</td><td>+0.3704</td><td>+0.4307</td><td>+0.4476</td><td><strong>+0.4686</strong></td><td>+0.4580</td></tr>
+    <tr><td>MATH-500</td><td>+0.3014</td><td>+0.4121</td><td>+0.4138</td><td><strong>+0.4484</strong></td><td>+0.4417</td></tr>
+    <tr><td>AIME25</td><td>+0.1150</td><td>+0.2287</td><td>+0.2199</td><td><strong>+0.2329</strong></td><td>+0.2159</td></tr>
+    <tr><td>HumanEval</td><td>+0.2373</td><td>+0.2905</td><td>+0.2945</td><td>+0.2884</td><td>+0.2870</td></tr>
+    <tr><td>MBPP</td><td>+0.2007</td><td>+0.2938</td><td>+0.2943</td><td><strong>+0.3151</strong></td><td>+0.3114</td></tr>
+    <tr><td>MT-Bench</td><td>+0.1055</td><td>+0.1352</td><td><strong>+0.1467</strong></td><td>+0.1424</td><td>+0.1426</td></tr>
+    <tr><td>LiveCodeBench</td><td>+0.1903</td><td>+0.2750</td><td>+0.3272</td><td>+0.3674</td><td><strong>+0.3688</strong></td></tr>
+  </tbody></table>
+  <p>结果支持“训练一到三轮后收益趋于平台”的判断，但不是严格的跨数据集最佳 epoch 证明：样本量、数据集难度和随机误差不同，最终候选仍应通过 paired bootstrap 或更大测试集确认。</p>
 </section>
 <section id="lessons"><h2>8. 结论与限制</h2>
   <ol>
@@ -176,18 +187,19 @@
     <li>top-k 决定候选覆盖上限；候选多不等于路径排序正确。早期 top-k 实验主要用于证明候选覆盖瓶颈。</li>
     <li>teacher-forced loss 的关键是每个 slot 只在一个明确的 target predecessor 条件下监督一个候选排名；all-predecessor loss 把多个不同条件混成了同一标签。</li>
     <li>位置衰减 \(0.8^s\) 体现前部接受的重要性，但它仍是 surrogate objective；最终必须检查每轮 target accepted draft tokens，以及 fixed/regressed 诊断。</li>
-    <li>5 epoch 可能继续降低训练 loss，也可能在训练轨迹上过拟合并损害真实 path walk。只有 output/0–4 都评测后，才能判断最佳 epoch。</li>
+    <li>30k×5 的真实评测已经完成：epoch 3 在 GSM8K、MATH-500、AIME25、MBPP 上达到该组最高，HumanEval/MT-Bench 接近平台，LiveCodeBench 到 epoch 4 仍略升；因此应按目标数据集选择 checkpoint，而不是默认最后一个 epoch。</li>
   </ol>
-  <p class="note">当前 5-epoch run 尚未完成，页面中的 5-epoch 行只记录配置和状态。后续评测脚本会分别输出每个 epoch 的 candidate coverage、首 slot acceptance、全 round EAL、fixed-base-error 和 regressed-base-correct。</p>
+  <p class="note">80k 数据已生成并通过 80,000 行唯一键校验，但尚未完成 selector 训练；后续若修复 launcher，应把 80k 训练与本页 30k×5 结果分开报告，不能将数据采集结果写成模型收益。</p>
 </section>
 <section id="sources" class="references"><h2>原始记录与代码</h2><ol>
   <li><a href="https://github.com/mokomoko05/dLLMSpec/tree/main/agentWorkSpace/20260901_dflash2_path_selector_refiner">独立实验工作区、训练/评测脚本和 EXPERIMENT_LOG</a></li>
+  <li><a href="https://github.com/mokomoko05/dLLMSpec/tree/main/agentWorkSpace/20260904_dflash2_selector_80k">80k 数据扩展实验日志（数据已合并，训练未启动）</a></li>
   <li><a href="https://github.com/mokomoko05/dLLMSpec/blob/main/implementations/speculators/src/speculators/models/dflash_selector/core.py"><code>DFlashSelectorDraftModel</code>、edge scoring、teacher-forced loss 与 inference path</a></li>
   <li><a href="https://github.com/mokomoko05/dLLMSpec/blob/main/implementations/speculators/src/speculators/models/dflash/core.py"><code>DFlashDraftModel._backbone_forward</code>：anchor block、target 对齐和 slot-0 mask</a></li>
   <li><a href="https://inco.ai/blog/dflash2/">DFlash2 官方 path selector 说明</a></li>
   <li><a href="https://github.com/vllm-project/vllm/blob/3406ec1dae9916f920b90f0dbf90dcf54923d042/vllm/v1/worker/gpu/spec_decode/dflash2/speculator.py">vLLM DFlash2 selector walk 参考实现</a></li>
 </ol></section>
 </article></main>
-<footer class="page-footer"><span>DFlash2 Path Selector 训练 · 2026-09-03</span><a href="../">返回内容目录</a></footer>
+<footer class="page-footer"><span>DFlash2 Path Selector 训练 · 2026-09-05</span><a href="../">返回内容目录</a></footer>
 </body>
 </html>

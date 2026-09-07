@@ -27,6 +27,7 @@
   <p>本页只讨论 DFlash2 风格的 <strong>path selector</strong>：它不生成词表外的新 token，而是在 DFlash 每个 proposal 槽位的 top-<var>K</var> 候选中重新选择一条连贯路径。selector 的可训练参数是隐藏状态投影、前驱 token codebook 和后继 token codebook；Qwen3-8B target 与原始 DFlash backbone 始终冻结。</p>
   <p>最重要的有效版本是 5k non-thinking、<code>lr=1e-4</code>、纯 teacher forcing 的 top-<var>K=64</var> 训练，以及其 30k、1 epoch 扩展。前者在 GSM8K 512 条 paired full-round 评测中每轮 target 接受长度增加 <strong>0.0481</strong> token；后者在 7 个数据集、每集最多 128 条的评测中全部为正，GSM8K 增加 <strong>0.2802</strong>、MATH-500 增加 <strong>0.2683</strong> 个 target 接受 draft token。随后独立重启的 30k×5 epoch 训练也已完成：GSM8K 在 epoch 3 达到 +0.4686，epoch 4 回落到 +0.4580；其余数据集的 epoch 3/4 差异较小，说明继续训练的收益已进入平台区，不能简单把最后一个 epoch 当作全局最佳。</p>
   <p class="note">“接受长度”统一指一次 verification round 中 target 实际接受的连续 draft token 数，不包含 target bonus token；它不是最终答案准确率，也不是离线 validation loss。</p>
+  <p class="note"><strong>2026-09-07 官方在线口径复盘：</strong>为消除旧离线 teacher-forcing evaluator 的首轮 anchor/cache 差异，新增与官方 DFlash <code>dflash_generate</code> 一致的 online evaluator。GSM8K、MATH-500、MBPP、HumanEval、AIME25 五个数据集、epoch 0–4 共 25 个点全部完成；base/selector 的 target greedy 输出在 2710/2710 个样本上完全一致。跨 verification round pooled accepted draft 为 base 6.0236、selector 6.2159（+0.1923）；该结果只说明 lossless 输出 identity 与接受效率，不等同于任务准确率，也不能与旧离线结果直接拼接。</p>
 </section>
 <nav class="toc" aria-labelledby="toc-title"><h2 id="toc-title">目录</h2><ol>
   <li><a href="#status">当前进展</a></li><li><a href="#terminology">术语与边界</a></li>

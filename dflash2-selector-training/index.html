@@ -26,7 +26,7 @@
 <section class="abstract" aria-labelledby="abstract-title">
   <h2 id="abstract-title">摘要</h2>
   <p>DFlash2 风格的 <strong>path selector</strong> 只在每个 proposal 槽位的 top-<var>K</var> 候选里重选一条路径。可训练参数是隐藏状态投影、前驱 codebook 和后继 codebook；Qwen3-8B target 与 DFlash backbone 始终冻结。</p>
-  <p>有效训练配方是 30k non-thinking、top-<var>K=64</var>、<code>lr=1e-4</code>、纯 teacher forcing。独立跑完 5 个 epoch 后，把它接到官方 <code>dflash_generate</code> 循环里评测：GSM8K、MATH-500、MBPP、HumanEval、AIME25 × epoch 0–4，共 25 点。<strong>2710/2710</strong> 条样本的 target greedy 输出与 baseline 完全一致；按 verification round 汇总，accepted draft 从 6.0236 升到 6.2159，增量 <strong>+0.1923</strong>。epoch 3 最高（+0.2224），epoch 4 为 +0.2201。AIME25 epoch 0 是唯一负点（−0.0377），其余 24 点为正。</p>
+  <p>有效训练配方是 30k non-thinking、top-<var>K=64</var>、<code>lr=1e-4</code>、纯 teacher forcing。独立跑完 5 个 epoch 后，把它接到官方 <code>dflash_generate</code> 循环里评测：GSM8K、MATH-500、MBPP、HumanEval、AIME25 × epoch 0–4，共 25 点。<strong>2710/2710</strong> 条样本的 target greedy 输出与 baseline 完全一致；五数据集等权的 per-sample accepted draft 平均值从 base 5.9917 提升到 epoch 4 的 6.2543，增量 <strong>+0.2625</strong>。AIME25 epoch 0 为 −0.0122，其余 24 点为正。</p>
   <p>接受长度指一轮 verification 中 target 连续接受的 draft token 数，不含 bonus。第 7 节的离线 full-round 表用来筛选上述配方；第 8 节的在线表才是与官方解码循环一致的结论。两套数字因首轮 anchor / KV cache 不同，分开读。</p>
 </section>
 <nav class="toc" aria-labelledby="toc-title"><h2 id="toc-title">目录</h2><ol>
@@ -41,7 +41,7 @@
   <table><caption>表 1. 当前状态（2026-09-11）</caption><tbody>
     <tr><th>训练</th><td>30k non-thinking、top-k=64、纯 teacher forcing、lr=1e-4，5 个 epoch 已正常结束。</td></tr>
     <tr><th>离线评测</th><td>七数据集 × epoch 0–4 的 full-round 模拟已完成，用于筛选训练配方。</td></tr>
-    <tr><th>官方在线评测</th><td>五数据集 × epoch 0–4 共 25 点完成；输出一致 2710/2710，pooled accepted draft +0.1923。</td></tr>
+    <tr><th>官方在线评测</th><td>五数据集 × epoch 0–4 共 25 点完成；输出一致 2710/2710，五数据集等权 per-sample accepted draft epoch 4 相对 base +0.2625。</td></tr>
     <tr><th>核心指标</th><td>每轮 target 接受的 draft token 数，不含 bonus。在线结论看第 8 节，离线筛选用第 7 节。</td></tr>
     <tr><th>80k 扩展</th><td>已追加 50k 条 non-thinking target 轨迹并与原 30k 合并为 80,000 行；训练尚未启动。首个 launcher 因未定义 <code>CUDA_HOME</code> 退出，retry watcher 还引用了不存在的 <code>validate_output.py</code>，因此没有 80k checkpoint 或收益结论。</td></tr>
     <tr><th>checkpoint / 磁盘</th><td>checkpoint 只保存 selector 轻量参数，不复制 Qwen3/DFlash backbone；80k 数据与失败日志仍保留，启动训练前需先修复 launcher 依赖并复核磁盘。</td></tr>
@@ -163,7 +163,7 @@
     <tr><td><strong>5k、top-k=64、lr=1e-4、纯 teacher forcing</strong></td><td>anchor + 15 proposal；\(P^{\mathrm{TF}}=[a,y_1,\ldots,y_{14}]\)；只在 target 位于候选时做加权 CE。</td><td><strong>首个稳定有效版本</strong>：GSM8K 512 条 paired full-round 为 +0.0481；跨数据集方向多为正。</td></tr>
     <tr><td>30k、top-k=64、lr=1e-4、all-predecessor、1 epoch</td><td>完整 edge scores 的 64 个 predecessor rows 都复制监督同一个 target；位置衰减仍为 \(0.8^{s-1}\)。</td><td>不推荐：7 集中有正有负，监督条件与推理 path walk 不完全匹配。</td></tr>
     <tr><td>30k、top-k=64、lr=1e-4、纯 teacher forcing、1 epoch</td><td>每个 slot 只用一个真实 predecessor；候选 graph 按官方 edge scoring 构造；rank=16；target/DFlash 全冻结。</td><td>离线 7 集全正，作为 5-epoch 的公平对照。</td></tr>
-    <tr><td><strong>30k、纯 teacher forcing、5 epochs</strong></td><td>与上一版本完全相同，仅 epoch 数改为 5；每个 epoch 独立保存。</td><td><strong>当前结论版本</strong>：官方在线 25 点 pooled +0.1923；epoch 3 最高。</td></tr>
+    <tr><td><strong>30k、纯 teacher forcing、5 epochs</strong></td><td>与上一版本完全相同，仅 epoch 数改为 5；每个 epoch 独立保存。</td><td><strong>当前结论版本</strong>：官方在线 per-sample 汇总 epoch 3 最高，较 base +0.2634。</td></tr>
   </tbody></table>
   <h3>6.1 早期 top-k 数值：为什么只作诊断</h3>
   <p>早期 standalone 脚本在严格 held-out 区间上，旧单块 EAL 随 top-k 上升：第 3500–4499 条里 top-k=24 为 0.95（相对 base +0.901，coverage 0.670），top-k=32 为 1.16（+1.111，0.724），top-k=48 为 1.481（+1.432，0.786），top-k=64 为 1.575（+1.526，0.821）；第 4000–4999 条中 top-k=64 为 1.551（+1.496，0.812）。结论只有一条：候选集合越大，target token 越容易落入可重排范围。这些运行使用旧单块 evaluator，部分还在 anchor/slot 对齐修复之前，数字只用于覆盖诊断。</p>
@@ -214,45 +214,26 @@
 <section id="online-results"><h2>8. 官方在线评测</h2>
   <h3>8.1 在线与离线评测流程</h3>
   <p><strong>离线评测</strong>从固定 prompt 和预先组织的 target context 出发，在本地 full-round simulator 中分别推进 baseline 与 selector；每轮执行 DFlash proposal、selector path walk、target greedy verification 和 context 更新。它运行快、覆盖七个数据集，承担配方筛选与逐 epoch 趋势分析。首轮 anchor 直接取 prompt 末 token，KV cache 由 simulator 组织，因此第 7 节保留为训练开发口径。</p>
-  <p><strong>在线评测</strong>复用官方 <code>dflash_generate</code> 的 prefill、DynamicCache、block verification、cache crop 和 EOS 流程。target 先产生首个生成 token 作为 anchor，随后 baseline 与 selector 各自完整解码；selector 只替换 proposal callback。每条样本核对两条路径的 target greedy token 序列，并按所有 verification round 汇总 accepted draft。这个流程与部署时的生成循环一致，因此表 7 作为正式结果。</p>
+  <p><strong>在线评测</strong>复用官方 <code>dflash_generate</code> 的 prefill、DynamicCache、block verification、cache crop 和 EOS 流程。target 先产生首个生成 token 作为 anchor，随后 baseline 与 selector 各自完整解码；selector 只替换 proposal callback。每条样本核对两条路径的 target greedy token 序列，并计算该样本各 verification round 的 accepted draft 平均值，再对样本等权平均。这个流程与部署时的生成循环一致，因此表 7 作为正式结果。</p>
   <p>正式矩阵使用 Qwen3-8B / Qwen3-8B-DFlash-b16、BF16、SDPA、block size 16、temperature 0、最多 2048 new tokens；GSM8K、MATH-500、MBPP、HumanEval 每点 128 条，AIME25 每点 30 条。五个 checkpoint 共 25 点，全部运行于单张 A100 80GB。</p>
   <h3>8.2 完整 25 点结果</h3>
-  <table><caption>表 7. 官方在线生成循环；指标为 accepted draft tokens / verification round</caption><thead><tr><th>数据集</th><th>epoch</th><th>样本</th><th>Base</th><th>Selector</th><th>Δ</th><th>输出一致</th></tr></thead><tbody>
-    <tr><td>GSM8K</td><td>0</td><td>128</td><td>5.2785</td><td>5.4749</td><td>+0.1964</td><td>128/128</td></tr>
-    <tr><td>GSM8K</td><td>1</td><td>128</td><td>5.2785</td><td>5.5467</td><td>+0.2681</td><td>128/128</td></tr>
-    <tr><td>GSM8K</td><td>2</td><td>128</td><td>5.2785</td><td>5.5992</td><td>+0.3207</td><td>128/128</td></tr>
-    <tr><td>GSM8K</td><td>3</td><td>128</td><td>5.2785</td><td>5.6099</td><td>+0.3314</td><td>128/128</td></tr>
-    <tr><td>GSM8K</td><td>4</td><td>128</td><td>5.2785</td><td>5.6107</td><td>+0.3322</td><td>128/128</td></tr>
-    <tr><td>MATH-500</td><td>0</td><td>128</td><td>7.1872</td><td>7.2650</td><td>+0.0778</td><td>128/128</td></tr>
-    <tr><td>MATH-500</td><td>1</td><td>128</td><td>7.1872</td><td>7.3235</td><td>+0.1363</td><td>128/128</td></tr>
-    <tr><td>MATH-500</td><td>2</td><td>128</td><td>7.1872</td><td>7.3576</td><td>+0.1704</td><td>128/128</td></tr>
-    <tr><td>MATH-500</td><td>3</td><td>128</td><td>7.1872</td><td>7.3651</td><td>+0.1779</td><td>128/128</td></tr>
-    <tr><td>MATH-500</td><td>4</td><td>128</td><td>7.1872</td><td>7.3618</td><td>+0.1746</td><td>128/128</td></tr>
-    <tr><td>MBPP</td><td>0</td><td>128</td><td>4.7792</td><td>4.9340</td><td>+0.1548</td><td>128/128</td></tr>
-    <tr><td>MBPP</td><td>1</td><td>128</td><td>4.7792</td><td>4.9823</td><td>+0.2031</td><td>128/128</td></tr>
-    <tr><td>MBPP</td><td>2</td><td>128</td><td>4.7792</td><td>5.0024</td><td>+0.2232</td><td>128/128</td></tr>
-    <tr><td>MBPP</td><td>3</td><td>128</td><td>4.7792</td><td>5.0180</td><td>+0.2388</td><td>128/128</td></tr>
-    <tr><td>MBPP</td><td>4</td><td>128</td><td>4.7792</td><td>5.0073</td><td>+0.2281</td><td>128/128</td></tr>
-    <tr><td>HumanEval</td><td>0</td><td>128</td><td>5.4630</td><td>5.6501</td><td>+0.1872</td><td>128/128</td></tr>
-    <tr><td>HumanEval</td><td>1</td><td>128</td><td>5.4630</td><td>5.7312</td><td>+0.2682</td><td>128/128</td></tr>
-    <tr><td>HumanEval</td><td>2</td><td>128</td><td>5.4630</td><td>5.7403</td><td>+0.2773</td><td>128/128</td></tr>
-    <tr><td>HumanEval</td><td>3</td><td>128</td><td>5.4630</td><td>5.7528</td><td>+0.2898</td><td>128/128</td></tr>
-    <tr><td>HumanEval</td><td>4</td><td>128</td><td>5.4630</td><td>5.7518</td><td>+0.2888</td><td>128/128</td></tr>
-    <tr><td>AIME25</td><td>0</td><td>30</td><td>6.4664</td><td>6.4288</td><td>−0.0377</td><td>30/30</td></tr>
-    <tr><td>AIME25</td><td>1</td><td>30</td><td>6.4664</td><td>6.4952</td><td>+0.0287</td><td>30/30</td></tr>
-    <tr><td>AIME25</td><td>2</td><td>30</td><td>6.4664</td><td>6.5139</td><td>+0.0475</td><td>30/30</td></tr>
-    <tr><td>AIME25</td><td>3</td><td>30</td><td>6.4664</td><td>6.5118</td><td>+0.0454</td><td>30/30</td></tr>
-    <tr><td>AIME25</td><td>4</td><td>30</td><td>6.4664</td><td>6.5164</td><td>+0.0499</td><td>30/30</td></tr>
+  <table><caption>表 7. 官方在线生成循环；per-sample accepted draft tokens / verification round</caption><thead><tr><th>方法 / checkpoint</th><th>GSM8K</th><th>MATH-500</th><th>MBPP</th><th>HumanEval</th><th>AIME25</th></tr></thead><tbody>
+    <tr><td>Base</td><td>5.5196</td><td>7.2937</td><td>4.9814</td><td>5.5709</td><td>6.5930</td></tr>
+    <tr><td>Selector epoch 0</td><td>5.7332</td><td>7.4428</td><td>5.1968</td><td>5.7829</td><td>6.5808</td></tr>
+    <tr><td>Selector epoch 1</td><td>5.8258</td><td>7.5155</td><td>5.2409</td><td>5.8565</td><td>6.6632</td></tr>
+    <tr><td>Selector epoch 2</td><td>5.8734</td><td>7.5492</td><td>5.2683</td><td>5.8677</td><td>6.6722</td></tr>
+    <tr><td>Selector epoch 3</td><td>5.8913</td><td>7.5625</td><td>5.2752</td><td>5.8740</td><td>6.6724</td></tr>
+    <tr><td>Selector epoch 4</td><td>5.8919</td><td>7.5577</td><td>5.2662</td><td>5.8753</td><td>6.6802</td></tr>
   </tbody></table>
-  <p>25 点合计 2710 条生成，base 与 selector 的 target greedy 输出达到 <strong>2710/2710</strong> token 序列一致。按全部 verification round pooled，base 为 <strong>6.0236</strong>，selector 为 <strong>6.2159</strong>，提升 <strong>+0.1923 token/round</strong>；24 个点为正，AIME25 epoch 0 为 −0.0377。按 epoch 汇总，增量依次为 +0.1204、+0.1864、+0.2132、<strong>+0.2224</strong>、+0.2201，epoch 3 给出本矩阵最高总体收益。</p>
+  <p>表中每个数据集先对样本内 verification round 求平均，再对样本等权平均。25 点合计 2710 条生成，base 与 selector 的 target greedy 输出达到 <strong>2710/2710</strong> token 序列一致。五数据集等权汇总的 base 为 <strong>5.9917</strong>，selector epoch 0–4 依次为 6.1473、6.2204、6.2462、6.2551、6.2543；相对 base 增量为 +0.1556、+0.2287、+0.2544、+0.2634、+0.2625。epoch 3 给出 per-sample 汇总最高值。</p>
 </section>
 <section id="lessons"><h2>9. 结论</h2>
   <ol>
-    <li>正式收益来自官方在线生成循环：top-k=64、lr=1e-4、teacher-forced 30k×5 在 25 点 pooled 后提升 +0.1923 token/round，并保持 2710/2710 输出一致。</li>
+    <li>正式收益来自官方在线生成循环：top-k=64、lr=1e-4、teacher-forced 30k×5 的 per-sample 汇总持续高于 base，epoch 3 达到 +0.2634 token/round，并保持 2710/2710 输出一致。</li>
     <li>top-k 决定候选覆盖上限，selector 学习在候选集合内选择连贯路径；早期 top-k 实验刻画了这一覆盖瓶颈。</li>
     <li>teacher-forced loss 的关键是每个 slot 只在一个明确的 target predecessor 条件下监督一个候选排名；all-predecessor loss 把多个不同条件混成了同一标签。</li>
     <li>位置衰减 \(0.8^{s-1}\)（首个 proposal 权重为 1）体现前部接受的重要性，但它仍是 surrogate objective；最终必须检查每轮 target accepted draft tokens，以及 fixed/regressed 诊断。</li>
-    <li>在线汇总在 epoch 3 达到最高增量 +0.2224，epoch 4 为 +0.2201；部署候选优先采用 epoch 3，并按目标数据集继续扩大样本确认。</li>
+    <li>per-sample 汇总在 epoch 3 达到最高增量 +0.2634；部署候选可按目标数据集选择 epoch 3 或 epoch 4。</li>
   </ol>
   <p class="note">80k 数据已生成并通过 80,000 行唯一键校验；selector 训练尚未启动。后续修复 launcher 后，80k 训练与本页 30k×5 结果分别报告，数据采集阶段单独作为数据资产记录。</p>
 </section>

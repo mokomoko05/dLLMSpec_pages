@@ -24,6 +24,7 @@ h1 { margin-bottom: 5pt; font-size: 16pt; line-height: 1.1; }
 .article-list h3 a:hover { text-decoration: underline; }
 .article-list p { margin-bottom: 2pt; color: #444; font-size: 9.5pt; }
 .article-list .entry-date { margin: 0; color: var(--muted); font-size: 8.5pt; }
+.article-list .entry-meta { margin: 1pt 0 0; color: var(--muted); font-size: 8.5pt; }
 footer { margin-top: 18pt; padding-top: 8pt; border-top: 0.5pt solid var(--line); color: var(--muted); font-size: 8.5pt; }
 
 /* Trace collection page */

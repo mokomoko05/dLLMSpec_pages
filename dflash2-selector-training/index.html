@@ -16,38 +16,39 @@
   <h1>DFlash2 Path Selector 训练实验进展</h1>
   <p class="subtitle">从早期独立候选重排，到 Speculators 中与 DFlash2 推理路径一致的训练</p>
   <dl class="article-meta">
-    <div><dt>报告时间</dt><dd>2026-09-05</dd></div>
-    <div><dt>当前状态</dt><dd>30k non-thinking × 5 epochs 与七数据集评测已完成</dd></div>
+    <div><dt>报告时间</dt><dd>2026-09-11</dd></div>
+    <div><dt>当前状态</dt><dd>30k×5 训练完成；官方在线 25 点评测完成</dd></div>
     <div><dt>模型</dt><dd>Qwen3-8B target / DFlash block-16</dd></div>
     <div><dt>硬件</dt><dd>4 × NVIDIA A100 80GB PCIe</dd></div>
-    <div><dt>耗时</dt><dd>30k×5 训练约 19 GPU-hour，评测约 22 GPU-hour（4×A100）；官方在线复盘约 6 GPU-hour（1×A100）</dd></div>
+    <div><dt>耗时</dt><dd>30k×5 训练约 19 GPU-hour，离线七数据集评测约 22 GPU-hour（4×A100）；官方在线 25 点约 6 GPU-hour（1×A100）</dd></div>
   </dl>
 </header>
 <section class="abstract" aria-labelledby="abstract-title">
   <h2 id="abstract-title">摘要</h2>
-  <p>本页只讨论 DFlash2 风格的 <strong>path selector</strong>：它不生成词表外的新 token，而是在 DFlash 每个 proposal 槽位的 top-<var>K</var> 候选中重新选择一条连贯路径。它的可训练参数是隐藏状态投影、前驱 token codebook 和后继 token codebook；Qwen3-8B target 与原始 DFlash backbone 始终冻结。</p>
-  <p>最重要的有效版本是 5k non-thinking、<code>lr=1e-4</code>、纯 teacher forcing 的 top-<var>K=64</var> 训练，以及其 30k、1 epoch 扩展。前者在 GSM8K 512 条 paired full-round 评测中每轮 target 接受长度增加 <strong>0.0481</strong> token；后者在 7 个数据集、每集最多 128 条的评测中全部为正，GSM8K 增加 <strong>0.2802</strong>、MATH-500 增加 <strong>0.2683</strong> 个 target 接受 draft token。随后独立重启的 30k×5 epoch 训练也已完成：GSM8K 在 epoch 3 达到 +0.4686，epoch 4 回落到 +0.4580；其余数据集的 epoch 3/4 差异较小，说明继续训练的收益已进入平台区，不能简单把最后一个 epoch 当作全局最佳。</p>
-  <p class="note">“接受长度”统一指一次 verification round 中 target 实际接受的连续 draft token 数，不包含 target bonus token；它不是最终答案准确率，也不是离线 validation loss。</p>
-  <p class="note"><strong>2026-09-07 官方在线口径复盘：</strong>为消除旧离线 teacher-forcing evaluator 的首轮 anchor/cache 差异，新增与官方 DFlash <code>dflash_generate</code> 一致的 online evaluator。GSM8K、MATH-500、MBPP、HumanEval、AIME25 五个数据集、epoch 0–4 共 25 个点全部完成，墙钟约 6 小时（1×A100，约 6 GPU-hour）；base/selector 的 target greedy 输出在 2710/2710 个样本上完全一致。跨 verification round pooled accepted draft 为 base 6.0236、selector 6.2159（+0.1923）；该结果只说明 lossless 输出 identity 与接受效率，不等同于任务准确率，也不能与旧离线结果直接拼接。</p>
+  <p>DFlash2 风格的 <strong>path selector</strong> 只在每个 proposal 槽位的 top-<var>K</var> 候选里重选一条路径。可训练参数是隐藏状态投影、前驱 codebook 和后继 codebook；Qwen3-8B target 与 DFlash backbone 始终冻结。</p>
+  <p>有效训练配方是 30k non-thinking、top-<var>K=64</var>、<code>lr=1e-4</code>、纯 teacher forcing。独立跑完 5 个 epoch 后，把它接到官方 <code>dflash_generate</code> 循环里评测：GSM8K、MATH-500、MBPP、HumanEval、AIME25 × epoch 0–4，共 25 点。<strong>2710/2710</strong> 条样本的 target greedy 输出与 baseline 完全一致；按 verification round 汇总，accepted draft 从 6.0236 升到 6.2159，增量 <strong>+0.1923</strong>。epoch 3 最高（+0.2224），epoch 4 为 +0.2201。AIME25 epoch 0 是唯一负点（−0.0377），其余 24 点为正。</p>
+  <p>接受长度指一轮 verification 中 target 连续接受的 draft token 数，不含 bonus。第 7 节的离线 full-round 表用来筛选上述配方；第 8 节的在线表才是与官方解码循环一致的结论。两套数字因首轮 anchor / KV cache 不同，分开读。</p>
 </section>
 <nav class="toc" aria-labelledby="toc-title"><h2 id="toc-title">目录</h2><ol>
   <li><a href="#status">当前进展</a></li><li><a href="#terminology">术语与边界</a></li>
   <li><a href="#inference-flow">官方一致的推理数据流</a></li><li><a href="#training-flow">Speculators 训练数据流</a></li>
   <li><a href="#loss">Loss 与指标</a></li><li><a href="#versions">有意义的实验版本</a></li>
-  <li><a href="#results">真实 round 结果</a></li><li><a href="#lessons">结论与限制</a></li><li><a href="#sources">代码与原始记录</a></li>
+  <li><a href="#results">离线评测</a></li><li><a href="#online-results">官方在线评测</a></li>
+  <li><a href="#lessons">结论</a></li><li><a href="#sources">代码与原始记录</a></li>
 </ol></nav>
 <section id="status"><h2>1. 当前进展</h2>
-  <p>30k×5 run 使用独立初始化，而不是从 1-epoch checkpoint 续训；原因是 1-epoch cosine scheduler 已把学习率降到接近零，直接续训不能代表公平的多 epoch 对照。训练目录为 <code>agentWorkSpace/20260901_dflash2_path_selector_refiner/runs/20260903_5epoch_teacher_forced_30k_4gpu</code>，逐 epoch checkpoint 和评测结果汇总在 <code>runs/20260904_official_protocol_multidata_preemptive</code>。</p>
-  <table><caption>表 1. 当前状态（2026-09-05）</caption><tbody>
+  <p>30k×5 从独立初始化开始：1-epoch cosine 已经把学习率降到接近零，续训做不成公平的多 epoch 对照。训练目录为 <code>agentWorkSpace/20260901_dflash2_path_selector_refiner/runs/20260903_5epoch_teacher_forced_30k_4gpu</code>。离线七数据集结果在 <code>runs/20260904_official_protocol_multidata_preemptive</code>；官方在线 25 点在 <code>agentWorkSpace/20260906_223213_offline_eval_official_alignment/results/formal_matrix_20260906_232800</code>。</p>
+  <table><caption>表 1. 当前状态（2026-09-11）</caption><tbody>
     <tr><th>训练</th><td>30k non-thinking、top-k=64、纯 teacher forcing、lr=1e-4，5 个 epoch 已正常结束。</td></tr>
-    <tr><th>评测</th><td>GSM8K、MATH-500、AIME25、HumanEval、MBPP、MT-Bench、LiveCodeBench 的 epoch 0–4 full-round 评测全部完成，所有任务退出码为 0。</td></tr>
-    <tr><th>核心指标</th><td>使用 <code>mean_target_accepted_draft_tokens_per_round</code>，不含 target bonus；GSM8K 的 epoch 3 最好，epoch 4 略回落。</td></tr>
+    <tr><th>离线评测</th><td>七数据集 × epoch 0–4 的 full-round 模拟已完成，用于筛选训练配方。</td></tr>
+    <tr><th>官方在线评测</th><td>五数据集 × epoch 0–4 共 25 点完成；输出一致 2710/2710，pooled accepted draft +0.1923。</td></tr>
+    <tr><th>核心指标</th><td>每轮 target 接受的 draft token 数，不含 bonus。在线结论看第 8 节，离线筛选用第 7 节。</td></tr>
     <tr><th>80k 扩展</th><td>已追加 50k 条 non-thinking target 轨迹并与原 30k 合并为 80,000 行；训练尚未启动。首个 launcher 因未定义 <code>CUDA_HOME</code> 退出，retry watcher 还引用了不存在的 <code>validate_output.py</code>，因此没有 80k checkpoint 或收益结论。</td></tr>
     <tr><th>checkpoint / 磁盘</th><td>checkpoint 只保存 selector 轻量参数，不复制 Qwen3/DFlash backbone；80k 数据与失败日志仍保留，启动训练前需先修复 launcher 依赖并复核磁盘。</td></tr>
-    <tr><th>耗时</th><td>30k×5 训练墙钟 4 小时 52 分、约 19 GPU-hour；正式七数据集评测墙钟 5 小时 34 分、约 22 GPU-hour；两者均占用 4×A100。官方在线 25 点另计约 6 GPU-hour（1×A100）。</td></tr>
+    <tr><th>耗时</th><td>30k×5 训练墙钟 4 小时 52 分、约 19 GPU-hour；离线七数据集评测墙钟 5 小时 34 分、约 22 GPU-hour（均为 4×A100）。官方在线 25 点墙钟 6 小时、6 GPU-hour（1×A100）。</td></tr>
   </tbody></table>
   <h3 id="timing">1.1 训练与评测耗时</h3>
-  <p>墙钟是机器上实际经过的时间；GPU-hour 等于墙钟乘以同时占用的 GPU 数。4×A100 训练里 GPU0 跑冻结的 Qwen3-8B hidden-state server，GPU1–3 做 selector DDP，四张卡都计入。下表只汇总本页已经写出结论的训练/评测，不把失败扫描、被打断的初评和 80k 未启动训练算进“成功结果”。</p>
+  <p>墙钟是机器上实际经过的时间；GPU-hour 等于墙钟乘以同时占用的 GPU 数。4×A100 训练里 GPU0 跑冻结的 Qwen3-8B hidden-state server，GPU1–3 做 selector DDP，四张卡都计入。下表只计已经写出结论的训练和评测。</p>
   <table><caption>表 1 续. Path selector 训练与评测耗时</caption>
     <thead><tr><th>阶段</th><th>硬件</th><th>墙钟</th><th>GPU-hour</th><th>日志依据</th></tr></thead>
     <tbody>
@@ -58,17 +59,17 @@
       <tr><td>30k teacher-forced 1 epoch 训练</td><td>4×A100</td><td>1 小时</td><td>4.0</td><td>17:38–18:38；训练约 55 分、验证约 3 分</td></tr>
       <tr><td>30k teacher-forced 1 epoch 评测</td><td>4×A100</td><td>25 分钟</td><td>1.6</td><td>18:48–19:13</td></tr>
       <tr><td><strong>30k×5 训练</strong></td><td>4×A100</td><td>4 小时 52 分</td><td>约 19</td><td>19:40–00:32；每 epoch 训练约 55 分、验证约 3 分</td></tr>
-      <tr><td><strong>30k×5 七数据集评测</strong></td><td>4×A100</td><td>5 小时 34 分</td><td>约 22</td><td>09-04 10:27–16:01；GSM8K 先跑，随后 6 集×5 epoch</td></tr>
+      <tr><td><strong>30k×5 离线七数据集评测</strong></td><td>4×A100</td><td>5 小时 34 分</td><td>约 22</td><td>09-04 10:27–16:01；GSM8K 先跑，随后 6 集×5 epoch</td></tr>
       <tr><td>80k 数据生成</td><td>4×A100</td><td>约 3 小时</td><td>约 12</td><td>09-04 01:15–04:13；训练因 <code>CUDA_HOME</code> 失败</td></tr>
-      <tr><td><strong>官方在线 25 点</strong></td><td>1×A100</td><td>6 小时</td><td>6.0</td><td>09-06 23:29–09-07 05:29；不含完成后的 GPU 占位</td></tr>
+      <tr><td><strong>官方在线 25 点</strong></td><td>1×A100</td><td>6 小时</td><td>6.0</td><td>09-06 23:29–09-07 05:29；GPU 占位阶段单独记录</td></tr>
     </tbody>
   </table>
-  <p class="note">被 80k 采集打断的 30k×5 初评（09-04 00:31–01:11）以及早期 2k–5k standalone 超参扫描不计入上表成功结果。5k 六数据集评测只采用已写出的完成文件时间跨度，不把未知启动时刻外推成更长墙钟。</p>
+  <p class="note">被 80k 采集打断的 30k×5 初评（09-04 00:31–01:11）和早期 standalone 超参扫描未计入。5k 六数据集评测只采用完成文件时间跨度 21:17–22:36。</p>
 </section>
 <section id="terminology"><h2>2. 术语与实验边界</h2>
   <p><strong>Target model</strong> 是 Qwen3-8B，负责给出验证标准；<strong>DFlash backbone</strong> 是已训练好的 block-diffusion draft transformer，一次并行产生一个 block；<strong>anchor</strong> 是上一轮已经被 target 确认的 token，占 block 的 slot 0；<strong>proposal</strong> 是需要 target 验证的后续 token，block-16 中共有 15 个 proposal 槽位。</p>
   <p><strong>Logit</strong> 是 softmax 之前对词表每个 token 的分数；<strong>top-k candidate</strong> 是某槽位分数最高的 <var>K</var> 个 draft token；<strong>unary score</strong> 是候选自身的原始 DFlash logit；<strong>edge score</strong> 是“给定前驱后选择当前候选”的分数。<strong>Teacher forcing</strong> 在训练时使用真实 target 前驱；推理时则使用 path walk 上一槽位实际选出的候选前驱。</p>
-  <p>本实验不把“离线 candidate coverage”误称为接受率。coverage 只回答 target token 是否在候选集合内；只有 full-round speculative decoding 才能回答连续前缀实际被 target 接受了多少 token。</p>
+  <p>本页把 <strong>candidate coverage</strong> 定义为 target token 落入候选集合的比例，把 <strong>接受长度</strong> 定义为 full-round speculative decoding 中 target 实际接受的连续 draft 前缀长度。前者衡量候选上限，后者衡量端到端路径效率。</p>
 </section>
 <section id="inference-flow"><h2>3. 官方一致的推理数据流</h2>
   <h3>3.1 先固定符号和索引</h3>
@@ -80,13 +81,13 @@
     <span class="math-line">\(x^{\mathrm{draft}}_n=[a_n,\mathrm{MASK},\ldots,\mathrm{MASK}]\)</span>
     <span class="math-line">\(H^{\mathrm{draft}}\in\mathbb{R}^{N\times B\times D},\quad Z^{\mathrm{base}}=\operatorname{LMHead}(H^{\mathrm{draft}})\in\mathbb{R}^{N\times B\times V_d}\)</span>
   </div>
-  <p>其中 \(a_n\) 是第 \(n\) 个 block 的 anchor。DFlash 的 LM head 输出的是 draft logits，不是概率。完整块的 1-based 下标是 \(1,\ldots,B\)，第 1 位是 anchor。丢掉该位后，proposal 重新编号为 \(s=1,\ldots,S\)，对应原下标 \(s+1\)：</p>
+  <p>其中 \(a_n\) 是第 \(n\) 个 block 的 anchor。DFlash 的 LM head 输出 draft logits。完整块的 1-based 下标是 \(1,\ldots,B\)，第 1 位是 anchor。丢掉该位后，proposal 重新编号为 \(s=1,\ldots,S\)，对应原下标 \(s+1\)：</p>
   <div class="math-block"><span class="math-line">\(H_{n,s,:}=H^{\mathrm{draft}}_{n,s+1,:}\in\mathbb{R}^{D},\quad Z_{n,s,:}=Z^{\mathrm{base}}_{n,s+1,:}\in\mathbb{R}^{V_d}\)</span></div>
-  <p>这与代码 <code>[:,:,1:]</code> 丢掉 0-based 第 0 位一致。不要把 Python 切片 <code>[1:16]</code> 直接写成数学下标 \(1:16\)：前者取出 15 个 proposal，后者看起来像 16 个位置。若把完整 16 个 hidden 当作 proposal，anchor hidden 会错位地监督第一个 token，训练和推理就不是同一个问题。</p>
+  <p>这与代码 <code>[:,:,1:]</code> 丢掉 0-based 第 0 位一致。Python 切片 <code>[1:16]</code> 取出 15 个 proposal；数学记号对应这 15 个位置。完整 16 个 hidden 若整体作为 proposal，会让 anchor hidden 错位监督第一个 token，训练和推理的目标随之分离。</p>
   <h3>3.3 候选和前驱行</h3>
   <p>对每个 proposal slot \(s\)，<code>CandidatePathSelector.topk</code> 同时返回候选 token ID 和对应的原始 DFlash logit：</p>
   <div class="math-block"><span class="math-line">\((C,U)=\operatorname{TopK}_K(Z),\quad C\in\mathbb{N}^{N\times S\times K},\quad U\in\mathbb{R}^{N\times S\times K}\)</span></div>
-  <p>前驱行矩阵 \(P\) 存的是<strong>token ID</strong>，不是候选的列索引。第一个 proposal 的 \(K\) 行都复制 anchor；之后每个 slot 的第 \(p\) 行对应上一 slot 的第 \(p\) 个候选：</p>
+  <p>前驱行矩阵 \(P\) 直接存储 <strong>token ID</strong>。第一个 proposal 的 \(K\) 行都复制 anchor；之后每个 slot 的第 \(p\) 行对应上一 slot 的第 \(p\) 个候选：</p>
   <div class="math-block">
     <span class="math-line">\(P_{n,1,p}=a_n,\qquad P_{n,s,p}=C_{n,s-1,p}\quad(s=2,\ldots,S)\)</span>
     <span class="math-line">\(P\in\mathbb{N}^{N\times S\times K}\)</span>
@@ -99,12 +100,12 @@
     <span class="math-line">\(E_{n,s,p,q}=U_{n,s,q}+\sum_{r=1}^{d_r}A_{P_{n,s,p},r}\,Q_{n,s,r}\,G_{C_{n,s,q},r}\)</span>
     <span class="math-line">\(E\in\mathbb{R}^{N\times S\times K\times K}\)</span>
   </div>
-  <p>这与官方 DFlash2 的 \(S_s(a,b)=U_s(b)+\langle A(a)\odot Q(h_s),G(b)\rangle\) 是同一低秩双线性形式；这里把官方后继 codebook \(B\) 写成 \(G\)，避免和 block 长度 \(B\) 重名。\(E\) 仍是 logit-like score，不是归一化概率。边打分一次并行完成，之后 <code>walk_path</code> 按 slot 从左到右做 argmax。第一个 slot 的 \(K\) 个前驱行都是同一个 anchor，因此从第 1 行出发即可：</p>
+  <p>这与官方 DFlash2 的 \(S_s(a,b)=U_s(b)+\langle A(a)\odot Q(h_s),G(b)\rangle\) 是同一低秩双线性形式；这里把官方后继 codebook \(B\) 写成 \(G\)，避免和 block 长度 \(B\) 重名。\(E\) 是用于候选排序的 logit-like score。边打分一次并行完成，之后 <code>walk_path</code> 按 slot 从左到右做 argmax。第一个 slot 的 \(K\) 个前驱行都是同一个 anchor，因此从第 1 行出发即可：</p>
   <div class="math-block">
     <span class="math-line">\(\hat q_{n,1}=\arg\max_{q\in\{1,\ldots,K\}}E_{n,1,1,q},\quad \hat y_{n,1}=C_{n,1,\hat q_{n,1}}\)</span>
     <span class="math-line">\(\hat q_{n,s}=\arg\max_{q\in\{1,\ldots,K\}}E_{n,s,\hat q_{n,s-1},q},\quad \hat y_{n,s}=C_{n,s,\hat q_{n,s}}\quad(s=2,\ldots,S)\)</span>
   </div>
-  <p>推理总流程是：一次 DFlash forward → 一次 LM head → 一次 selector edge scoring → \(S=15\) 步小型 path walk → target verification。串行只存在于最后的索引选择，不是重新运行模型。</p>
+  <p>推理总流程是：一次 DFlash forward → 一次 LM head → 一次 selector edge scoring → \(S=15\) 步小型 path walk → target verification。串行部分集中在最后的轻量索引选择，模型前向保持一次。</p>
 </section>
 <section id="training-flow"><h2>4. Speculators 训练数据流</h2>
   <ol>
@@ -126,7 +127,7 @@
 </section>
 <section id="loss"><h2>5. Loss 与训练指标</h2>
   <h3>5.1 当前有效版本的 teacher-forced loss</h3>
-  <p>每个 slot 使用一个明确的真实 target 前驱，而不是把同一个 target 复制到所有 predecessor row。令 \(y_{n,s}\) 为 target label，teacher-forced 分数为：</p>
+  <p>每个 slot 使用一个明确的真实 target 前驱，并在对应 predecessor row 上监督候选排名。令 \(y_{n,s}\) 为 target label，teacher-forced 分数为：</p>
   <div class="math-block">
     <span class="math-line">\(S^{\mathrm{TF}}_{n,s,q}=U_{n,s,q}+\sum_{r=1}^{d_r}A_{P^{\mathrm{TF}}_{n,s},r}\,Q_{n,s,r}\,G_{C_{n,s,q},r}\)</span>
     <span class="math-line">\(S^{\mathrm{TF}}\in\mathbb{R}^{N\times S\times K}\)</span>
@@ -140,7 +141,7 @@
     <span class="math-line">\(\ell_{n,s}=-\log\frac{\exp S^{\mathrm{TF}}_{n,s,r_{n,s}}}{\sum_{q=1}^{K}\exp S^{\mathrm{TF}}_{n,s,q}}\)</span>
     <span class="math-line">\(w_s=\lambda^{s-1},\ \lambda=0.8,\qquad \mathcal{L}_{\mathrm{TF}}=\frac{\sum_{(n,s)\in\mathcal{V}}w_s\ell_{n,s}}{\sum_{(n,s)\in\mathcal{V}}w_s}\)</span>
   </div>
-  <p><code>_teacher_forced_selector_loss</code> 只对 \(\mathcal{V}\) 取 CE。代码 <code>selector_position_decay ** slot_positions</code> 里 <code>slot_positions = arange(S)</code> 是 0-based 的 \(0,\ldots,14\)，因此对应这里的 \(\lambda^{s-1}\)。第一个 proposal 的权重是 1，而不是 0.8；若把 \(s\) 当成从 1 开始却写成 \(0.8^s\)，会把首槽权重错写成 0.8。前部 slot 权重更高，因为第一个错误会截断后续连续接受；这仍是 surrogate objective，不是直接优化真实 EAL。</p>
+  <p><code>_teacher_forced_selector_loss</code> 对 \(\mathcal{V}\) 取 CE。代码 <code>selector_position_decay ** slot_positions</code> 里 <code>slot_positions = arange(S)</code> 是 0-based 的 \(0,\ldots,14\)，因此对应这里的 \(\lambda^{s-1}\)。第一个 proposal 的权重为 1，随后按 0.8 逐槽衰减。前部 slot 权重更高，因为第一个错误会截断后续连续接受；真实 EAL 由完整解码评测给出。</p>
   <h3>5.2 被淘汰的 all-predecessor loss</h3>
   <p>早期版本使用完整 \(E\in\mathbb{R}^{N\times S\times K\times K}\)，把同一个 target rank 沿 predecessor 轴复制 \(K\) 次。代码按位置权重对所有前驱行求和再归一化：</p>
   <div class="math-block"><span class="math-line">\(\mathcal{L}_{\mathrm{all}}=\frac{\sum_{(n,s)\in\mathcal{V}}w_s\sum_{p=1}^{K}\operatorname{CE}(E_{n,s,p,:},r_{n,s})}{K\sum_{(n,s)\in\mathcal{V}}w_s}\)</span></div>
@@ -154,19 +155,19 @@
   <p><code>mean_committed_tokens</code> 通常等于 \(m+1\)，因为它还包含 target 在拒绝位置产生的 bonus token；本页核心表格均使用不含 bonus 的 EAL。</p>
 </section>
 <section id="versions"><h2>6. 有意义的实验版本</h2>
-  <p>以下按“是否能用于当前算法结论”分类。早期结果即使数值很高，也不能与当前官方一致实现直接横向比较。</p>
+  <p>早期高 EAL 来自旧单块 evaluator 或错位的 anchor/slot，只作诊断。当前结论建立在 teacher-forced 30k×5 和官方在线 25 点上。</p>
   <table><caption>表 2. 版本、数据流和证据等级</caption><thead><tr><th>版本</th><th>数据流 / loss</th><th>结果定位</th></tr></thead><tbody>
-    <tr><td>早期 standalone 2k–5k、top-k 16/24/32/48/64</td><td>独立 <code>CandidatePathRefiner</code>；显式 teacher predecessor；候选内 CE；部分使用 <code>lr=0.01</code>。早期评测曾把 anchor/slot 对齐处理错误。</td><td>诊断性证据：扩大 top-k 提高 coverage 和候选内可修复空间；不能作为当前 Speculators 最终收益。</td></tr>
+    <tr><td>早期 standalone 2k–5k、top-k 16/24/32/48/64</td><td>独立 <code>CandidatePathRefiner</code>；显式 teacher predecessor；候选内 CE；部分使用 <code>lr=0.01</code>。早期评测曾把 anchor/slot 对齐处理错误。</td><td>诊断：扩大 top-k 提高 coverage。旧单块数字不进入最终收益。</td></tr>
     <tr><td>对齐修复后的 5k、lr=0.01</td><td>anchor 正确占 slot 0，15 个 proposal；top-k 16/64；逐样本 AdamW 学习率过大，训练后段 loss 上升。</td><td>失败诊断：slot 对齐虽必要，但高学习率会破坏首 slot，真实接受长度显著下降。</td></tr>
     <tr><td>5k、top-k=64、lr=1e-4、roll-in=0.5</td><td>一半 batch 使用真实 target predecessor，一半使用 selector rollout predecessor；位置权重 \(0.8^{s-1}\)。</td><td>有意义对照：GSM8K 512 条上正收益，但弱于纯 teacher forcing。</td></tr>
     <tr><td><strong>5k、top-k=64、lr=1e-4、纯 teacher forcing</strong></td><td>anchor + 15 proposal；\(P^{\mathrm{TF}}=[a,y_1,\ldots,y_{14}]\)；只在 target 位于候选时做加权 CE。</td><td><strong>首个稳定有效版本</strong>：GSM8K 512 条 paired full-round 为 +0.0481；跨数据集方向多为正。</td></tr>
     <tr><td>30k、top-k=64、lr=1e-4、all-predecessor、1 epoch</td><td>完整 edge scores 的 64 个 predecessor rows 都复制监督同一个 target；位置衰减仍为 \(0.8^{s-1}\)。</td><td>不推荐：7 集中有正有负，监督条件与推理 path walk 不完全匹配。</td></tr>
-    <tr><td><strong>30k、top-k=64、lr=1e-4、纯 teacher forcing、1 epoch</strong></td><td>每个 slot 只用一个真实 predecessor；候选 graph 按官方 edge scoring 构造；rank=16；target/DFlash 全冻结。</td><td><strong>当前最佳有效 checkpoint</strong>：7 个评测集均正收益，是 5-epoch 实验的公平对照。</td></tr>
-    <tr><td>30k、纯 teacher forcing、5 epochs</td><td>与上一版本完全相同，仅 epoch 数改为 5；每个 epoch 独立保存并按官方 full-round evaluator 复核。</td><td><strong>已完成：</strong>七个数据集均为正收益；GSM8K 在 epoch 3 最好，epoch 4 略回落，其余数据集 epoch 3/4 基本平台。</td></tr>
+    <tr><td>30k、top-k=64、lr=1e-4、纯 teacher forcing、1 epoch</td><td>每个 slot 只用一个真实 predecessor；候选 graph 按官方 edge scoring 构造；rank=16；target/DFlash 全冻结。</td><td>离线 7 集全正，作为 5-epoch 的公平对照。</td></tr>
+    <tr><td><strong>30k、纯 teacher forcing、5 epochs</strong></td><td>与上一版本完全相同，仅 epoch 数改为 5；每个 epoch 独立保存。</td><td><strong>当前结论版本</strong>：官方在线 25 点 pooled +0.1923；epoch 3 最高。</td></tr>
   </tbody></table>
   <h3>6.1 早期 top-k 数值：为什么只作诊断</h3>
-  <p>早期 standalone 脚本在严格 held-out 区间观察到明显的候选覆盖效应：第 3500–4499 条样本上，top-k=24 的旧单块 EAL 为 0.95（相对 base +0.901，coverage 0.670），top-k=32 为 1.16（+1.111，0.724），top-k=48 为 1.481（+1.432，0.786），top-k=64 为 1.575（+1.526，0.821）；第 4000–4999 条中 top-k=64 为 1.551（+1.496，0.812）。这些数字说明候选集合越大，target token 越容易落入可重排集合，但它们使用了旧的单块 evaluator，且部分运行在 anchor/slot 对齐修复之前。因此它们只能支持“candidate coverage 是上限”这一诊断，不能和当前 full-round EAL 直接比较。</p>
-  <p>对齐修复后使用 <code>lr=0.01</code> 的 5k 训练也不应作为正负收益基线：top-k=16 在 GSM8K 128 条上从 base 3.26520 降到 1.54333，top-k=64 降到 1.92212；训练日志同时显示后段 loss 上升。该实验的价值是隔离出高学习率和首 slot 回退问题，而不是证明 selector 结构不可行。</p>
+  <p>早期 standalone 脚本在严格 held-out 区间上，旧单块 EAL 随 top-k 上升：第 3500–4499 条里 top-k=24 为 0.95（相对 base +0.901，coverage 0.670），top-k=32 为 1.16（+1.111，0.724），top-k=48 为 1.481（+1.432，0.786），top-k=64 为 1.575（+1.526，0.821）；第 4000–4999 条中 top-k=64 为 1.551（+1.496，0.812）。结论只有一条：候选集合越大，target token 越容易落入可重排范围。这些运行使用旧单块 evaluator，部分还在 anchor/slot 对齐修复之前，数字只用于覆盖诊断。</p>
+  <p>对齐修复后 <code>lr=0.01</code> 的 5k 训练会打坏首 slot：GSM8K 128 条上 top-k=16 从 base 3.26520 降到 1.54333，top-k=64 降到 1.92212，训练后段 loss 上升。有效配方把学习率降到 <code>1e-4</code>。</p>
 </section>
 <section id="results"><h2>7. 真实 round 结果</h2>
   <h3>7.1 5k 四组训练对照（GSM8K 前 512 条）</h3>
@@ -208,17 +209,52 @@
     <tr><td>MT-Bench</td><td>+0.1055</td><td>+0.1352</td><td><strong>+0.1467</strong></td><td>+0.1424</td><td>+0.1426</td></tr>
     <tr><td>LiveCodeBench</td><td>+0.1903</td><td>+0.2750</td><td>+0.3272</td><td>+0.3674</td><td><strong>+0.3688</strong></td></tr>
   </tbody></table>
-  <p>结果支持“训练一到三轮后收益趋于平台”的判断，但不是严格的跨数据集最佳 epoch 证明：样本量、数据集难度和随机误差不同，最终候选仍应通过 paired bootstrap 或更大测试集确认。</p>
+  <p>离线结果显示训练一到三轮后收益趋于平台。各数据集的样本量和难度不同，正式 checkpoint 选择由下一节的同口径在线矩阵完成。</p>
 </section>
-<section id="lessons"><h2>8. 结论与限制</h2>
+<section id="online-results"><h2>8. 官方在线评测</h2>
+  <h3>8.1 在线与离线评测流程</h3>
+  <p><strong>离线评测</strong>从固定 prompt 和预先组织的 target context 出发，在本地 full-round simulator 中分别推进 baseline 与 selector；每轮执行 DFlash proposal、selector path walk、target greedy verification 和 context 更新。它运行快、覆盖七个数据集，承担配方筛选与逐 epoch 趋势分析。首轮 anchor 直接取 prompt 末 token，KV cache 由 simulator 组织，因此第 7 节保留为训练开发口径。</p>
+  <p><strong>在线评测</strong>复用官方 <code>dflash_generate</code> 的 prefill、DynamicCache、block verification、cache crop 和 EOS 流程。target 先产生首个生成 token 作为 anchor，随后 baseline 与 selector 各自完整解码；selector 只替换 proposal callback。每条样本核对两条路径的 target greedy token 序列，并按所有 verification round 汇总 accepted draft。这个流程与部署时的生成循环一致，因此表 7 作为正式结果。</p>
+  <p>正式矩阵使用 Qwen3-8B / Qwen3-8B-DFlash-b16、BF16、SDPA、block size 16、temperature 0、最多 2048 new tokens；GSM8K、MATH-500、MBPP、HumanEval 每点 128 条，AIME25 每点 30 条。五个 checkpoint 共 25 点，全部运行于单张 A100 80GB。</p>
+  <h3>8.2 完整 25 点结果</h3>
+  <table><caption>表 7. 官方在线生成循环；指标为 accepted draft tokens / verification round</caption><thead><tr><th>数据集</th><th>epoch</th><th>样本</th><th>Base</th><th>Selector</th><th>Δ</th><th>输出一致</th></tr></thead><tbody>
+    <tr><td>GSM8K</td><td>0</td><td>128</td><td>5.2785</td><td>5.4749</td><td>+0.1964</td><td>128/128</td></tr>
+    <tr><td>GSM8K</td><td>1</td><td>128</td><td>5.2785</td><td>5.5467</td><td>+0.2681</td><td>128/128</td></tr>
+    <tr><td>GSM8K</td><td>2</td><td>128</td><td>5.2785</td><td>5.5992</td><td>+0.3207</td><td>128/128</td></tr>
+    <tr><td>GSM8K</td><td>3</td><td>128</td><td>5.2785</td><td>5.6099</td><td>+0.3314</td><td>128/128</td></tr>
+    <tr><td>GSM8K</td><td>4</td><td>128</td><td>5.2785</td><td>5.6107</td><td>+0.3322</td><td>128/128</td></tr>
+    <tr><td>MATH-500</td><td>0</td><td>128</td><td>7.1872</td><td>7.2650</td><td>+0.0778</td><td>128/128</td></tr>
+    <tr><td>MATH-500</td><td>1</td><td>128</td><td>7.1872</td><td>7.3235</td><td>+0.1363</td><td>128/128</td></tr>
+    <tr><td>MATH-500</td><td>2</td><td>128</td><td>7.1872</td><td>7.3576</td><td>+0.1704</td><td>128/128</td></tr>
+    <tr><td>MATH-500</td><td>3</td><td>128</td><td>7.1872</td><td>7.3651</td><td>+0.1779</td><td>128/128</td></tr>
+    <tr><td>MATH-500</td><td>4</td><td>128</td><td>7.1872</td><td>7.3618</td><td>+0.1746</td><td>128/128</td></tr>
+    <tr><td>MBPP</td><td>0</td><td>128</td><td>4.7792</td><td>4.9340</td><td>+0.1548</td><td>128/128</td></tr>
+    <tr><td>MBPP</td><td>1</td><td>128</td><td>4.7792</td><td>4.9823</td><td>+0.2031</td><td>128/128</td></tr>
+    <tr><td>MBPP</td><td>2</td><td>128</td><td>4.7792</td><td>5.0024</td><td>+0.2232</td><td>128/128</td></tr>
+    <tr><td>MBPP</td><td>3</td><td>128</td><td>4.7792</td><td>5.0180</td><td>+0.2388</td><td>128/128</td></tr>
+    <tr><td>MBPP</td><td>4</td><td>128</td><td>4.7792</td><td>5.0073</td><td>+0.2281</td><td>128/128</td></tr>
+    <tr><td>HumanEval</td><td>0</td><td>128</td><td>5.4630</td><td>5.6501</td><td>+0.1872</td><td>128/128</td></tr>
+    <tr><td>HumanEval</td><td>1</td><td>128</td><td>5.4630</td><td>5.7312</td><td>+0.2682</td><td>128/128</td></tr>
+    <tr><td>HumanEval</td><td>2</td><td>128</td><td>5.4630</td><td>5.7403</td><td>+0.2773</td><td>128/128</td></tr>
+    <tr><td>HumanEval</td><td>3</td><td>128</td><td>5.4630</td><td>5.7528</td><td>+0.2898</td><td>128/128</td></tr>
+    <tr><td>HumanEval</td><td>4</td><td>128</td><td>5.4630</td><td>5.7518</td><td>+0.2888</td><td>128/128</td></tr>
+    <tr><td>AIME25</td><td>0</td><td>30</td><td>6.4664</td><td>6.4288</td><td>−0.0377</td><td>30/30</td></tr>
+    <tr><td>AIME25</td><td>1</td><td>30</td><td>6.4664</td><td>6.4952</td><td>+0.0287</td><td>30/30</td></tr>
+    <tr><td>AIME25</td><td>2</td><td>30</td><td>6.4664</td><td>6.5139</td><td>+0.0475</td><td>30/30</td></tr>
+    <tr><td>AIME25</td><td>3</td><td>30</td><td>6.4664</td><td>6.5118</td><td>+0.0454</td><td>30/30</td></tr>
+    <tr><td>AIME25</td><td>4</td><td>30</td><td>6.4664</td><td>6.5164</td><td>+0.0499</td><td>30/30</td></tr>
+  </tbody></table>
+  <p>25 点合计 2710 条生成，base 与 selector 的 target greedy 输出达到 <strong>2710/2710</strong> token 序列一致。按全部 verification round pooled，base 为 <strong>6.0236</strong>，selector 为 <strong>6.2159</strong>，提升 <strong>+0.1923 token/round</strong>；24 个点为正，AIME25 epoch 0 为 −0.0377。按 epoch 汇总，增量依次为 +0.1204、+0.1864、+0.2132、<strong>+0.2224</strong>、+0.2201，epoch 3 给出本矩阵最高总体收益。</p>
+</section>
+<section id="lessons"><h2>9. 结论</h2>
   <ol>
-    <li>当前最可信的正收益不是早期高 EAL 数字，而是 anchor 对齐后、top-k=64、lr=1e-4、teacher-forced loss、full-round evaluator 得到的结果。</li>
-    <li>top-k 决定候选覆盖上限；候选多不等于路径排序正确。早期 top-k 实验主要用于证明候选覆盖瓶颈。</li>
+    <li>正式收益来自官方在线生成循环：top-k=64、lr=1e-4、teacher-forced 30k×5 在 25 点 pooled 后提升 +0.1923 token/round，并保持 2710/2710 输出一致。</li>
+    <li>top-k 决定候选覆盖上限，selector 学习在候选集合内选择连贯路径；早期 top-k 实验刻画了这一覆盖瓶颈。</li>
     <li>teacher-forced loss 的关键是每个 slot 只在一个明确的 target predecessor 条件下监督一个候选排名；all-predecessor loss 把多个不同条件混成了同一标签。</li>
     <li>位置衰减 \(0.8^{s-1}\)（首个 proposal 权重为 1）体现前部接受的重要性，但它仍是 surrogate objective；最终必须检查每轮 target accepted draft tokens，以及 fixed/regressed 诊断。</li>
-    <li>30k×5 的真实评测已经完成：epoch 3 在 GSM8K、MATH-500、AIME25、MBPP 上达到该组最高，HumanEval/MT-Bench 接近平台，LiveCodeBench 到 epoch 4 仍略升；因此应按目标数据集选择 checkpoint，而不是默认最后一个 epoch。</li>
+    <li>在线汇总在 epoch 3 达到最高增量 +0.2224，epoch 4 为 +0.2201；部署候选优先采用 epoch 3，并按目标数据集继续扩大样本确认。</li>
   </ol>
-  <p class="note">80k 数据已生成并通过 80,000 行唯一键校验，但尚未完成 selector 训练；后续若修复 launcher，应把 80k 训练与本页 30k×5 结果分开报告，不能将数据采集结果写成模型收益。</p>
+  <p class="note">80k 数据已生成并通过 80,000 行唯一键校验；selector 训练尚未启动。后续修复 launcher 后，80k 训练与本页 30k×5 结果分别报告，数据采集阶段单独作为数据资产记录。</p>
 </section>
 <section id="sources" class="references"><h2>原始记录与代码</h2><ol>
   <li><a href="https://github.com/mokomoko05/dLLMSpec/tree/main/agentWorkSpace/20260901_dflash2_path_selector_refiner">独立实验工作区、训练/评测脚本和 EXPERIMENT_LOG</a></li>

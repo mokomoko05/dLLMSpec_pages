@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="官方 DFlash2 selector 驱动的 packed tree target backend、GSM8K tau 与端到端吞吐结果。">
+    <title>DFlash2 packed-tree target backend</title>
+    <link rel="stylesheet" href="../qwen38-dflash2-dspark/styles.css">
+  </head>
+  <body>
+    <nav class="top-nav" aria-label="站点导航"><a href="../">← 内容目录</a><span>dLLMSpec 实验报告</span></nav>
+    <main><article>
+      <header class="article-header">
+        <h1>DFlash2 packed-tree target backend</h1>
+        <p class="subtitle">单次 flattened target forward、ragged attention 与 packed-path GDN</p>
+        <dl class="article-meta">
+          <div><dt>实验时间</dt><dd>2026-09-16—17</dd></div>
+          <div><dt>硬件</dt><dd>1× NVIDIA A100 80GB PCIe</dd></div>
+          <div><dt>Target / Draft</dt><dd>Qwen3.8-27B / 官方 Qwen3.8-27B-DFlash2</dd></div>
+          <div><dt>状态</dt><dd>32/32 完成 · tau 提升 · 尚无 E2E 加速</dd></div>
+        </dl>
+      </header>
+
+      <section class="abstract">
+        <h2>摘要</h2>
+        <p>ours tree 已真实接入 vLLM target backend：每个 speculative step 只执行一次 target model forward，16 个 full-attention 层各调用一次 ragged FlashAttention，48 个 GDN 层各调用一次 grouped convolution 和一次 varlen fused recurrent kernel。候选树直接使用官方 DFlash2 selector checkpoint 的 edge scores 构建。</p>
+        <p>GSM8K 前 32 条、greedy、thinking off、concurrency 1 的正式结果中，mean per-request tau 从 <strong>6.349</strong> 提升到 <strong>7.174</strong>（<strong>+13.0%</strong>）；wall throughput 从 <strong>70.73 tok/s</strong> 降到 <strong>39.05 tok/s</strong>。工程实现相对上一版 5-wave GDN 已提速 60.7%，但 tree 的额外 target 计算仍超过 acceptance 收益。</p>
+      </section>
+
+      <nav class="toc">
+        <h2>目录</h2>
+        <ol>
+          <li><a href="#setup">实验设置</a></li>
+          <li><a href="#method">构树与数据流</a></li>
+          <li><a href="#backend">Target backend</a></li>
+          <li><a href="#results">正式结果</a></li>
+          <li><a href="#workflow">在线/离线评测</a></li>
+          <li><a href="#correctness">正确性与限制</a></li>
+        </ol>
+      </nav>
+
+      <section id="setup">
+        <h2>1. 实验设置</h2>
+        <table><tbody>
+          <tr><th>Target</th><td><code>Qwen3.8-27B</code>，BF16</td></tr>
+          <tr><th>Draft / selector</th><td>官方 <code>Qwen3.8-27B-DFlash2</code> checkpoint</td></tr>
+          <tr><th>Runtime</th><td>vLLM fork <code>exp/dflash2-ragged-tree-attention@edf1beb</code>，PyTorch 2.11.0+cu129</td></tr>
+          <tr><th>数据</th><td>GSM8K 前 32 条；每种方法 1 条 warmup</td></tr>
+          <tr><th>生成</th><td>greedy、thinking off、concurrency 1、<code>max_tokens=512</code></td></tr>
+          <tr><th>统计</th><td>per-request tau、latency 与 wall throughput</td></tr>
+        </tbody></table>
+        <p>official 行使用 vLLM 官方 DFlash2 线性 speculative decoding。ours 与 official 使用相同 target、draft/selector、框架 commit、GPU、数据顺序和请求参数。</p>
+      </section>
+
+      <section id="method">
+        <h2>2. 构树方法与数据流</h2>
+        <ol>
+          <li>官方 DFlash2 drafter 产生各 slot 的候选 token，官方 selector 输出 predecessor→successor edge scores。</li>
+          <li>official baseline 沿 edge-score argmax 选择 7-token trunk。ours 完整保护该 trunk，再按累计 path probability best-first 扩展 prefix-closed 分枝。</li>
+          <li>tree budget 固定为 21 个节点，单节点最多 2 个 child。builder 输出扁平 token、parent index、position、ancestor mask 与 root-to-leaf paths。</li>
+          <li>selector score 只分配候选预算；最终接受由 target greedy logits 做 exact verification，不由 selector 自行决定。</li>
+          <li>验证后只提交 anchor 与最长 target-matching path 的 KV、conv state 和 recurrent state，并返回 bonus token。</li>
+        </ol>
+        <p>因此 ours 使用的是官方 selector checkpoint 产生的真实分数，自研内容是候选预算分配、tree metadata、tree target execution、verification 与状态提交。</p>
+      </section>
+
+      <section id="backend">
+        <h2>3. 单次 target forward 与 packed-path GDN</h2>
+        <p>target runner 将 anchor 与 21 个唯一 tree node 放入一次 flattened forward。full-attention 层通过 ancestor mask 限制每个节点只能读取历史 KV 和自己的祖先链，再把所有 leaf query 打包为每层一次 ragged FlashAttention。</p>
+        <p>Qwen3.8 的 GDN 同时维护 causal-conv rolling buffer 和 recurrent state，分支存在严格父子依赖。当前实现把所有 root-to-leaf paths 组成一个 varlen batch；共享前缀在 GDN 内重复计算，但整层只发起一次 grouped conv 和一次 fused recurrent kernel。计算后选取重复节点的首次结果，映射回唯一 tree rows。</p>
+        <table><caption>表 1. 正式 trace 验收</caption><thead><tr><th>项目</th><th>结果</th></tr></thead><tbody>
+          <tr><td>target forward / verification step</td><td>1</td></tr>
+          <tr><td>full-attention 层</td><td>16；每层 1 个 ragged kernel</td></tr>
+          <tr><td>GDN 层</td><td>48；每层 1 conv + 1 recurrent wave</td></tr>
+          <tr><td>唯一 tree nodes</td><td>21</td></tr>
+          <tr><td>leaf count</td><td>4–10，均值 5.685</td></tr>
+          <tr><td>GDN packed path tokens</td><td>27–73，均值 42.805</td></tr>
+        </tbody></table>
+        <p>上一版依赖拓扑使用 5 conv waves + 5 recurrent waves。packed-path 将 mean latency 从 16.25 秒降到 10.11 秒，wall throughput 从 24.29 提高到 39.05 tok/s，工程吞吐提升 60.7%。</p>
+      </section>
+
+      <section id="results">
+        <h2>4. GSM8K-32 正式结果</h2>
+        <p>tau 按请求独立计算：<code>tau_i = sum(accepted_draft_tokens + 1) / verification_steps</code>，随后对 32 个请求等权汇总。</p>
+        <table><caption>表 2. official DFlash2 与 ours packed tree</caption><thead><tr><th>方法</th><th>n</th><th>mean tau</th><th>median</th><th>p05 / p95</th><th>mean latency</th><th>wall tok/s</th></tr></thead><tbody>
+          <tr><td>official DFlash2</td><td>32</td><td>6.349</td><td>6.268</td><td>5.782 / 7.034</td><td>5.575 s</td><td><strong>70.73</strong></td></tr>
+          <tr><td>ours packed tree</td><td>32</td><td><strong>7.174</strong></td><td>7.160</td><td>6.734 / 7.610</td><td>10.106 s</td><td>39.05</td></tr>
+          <tr><td>ours / official</td><td>—</td><td><strong>1.130×</strong></td><td>—</td><td>—</td><td>1.813×</td><td>0.552×</td></tr>
+        </tbody></table>
+        <p class="note">结论是 acceptance 提升、E2E 吞吐下降。21 个唯一节点与平均 42.8 个 GDN path token 的 target 成本，尚未被 13.0% 的 tau 收益抵消。</p>
+      </section>
+
+      <section id="workflow">
+        <h2>5. 在线与离线评测流程</h2>
+        <h3>5.1 在线</h3>
+        <ol>
+          <li>启动单卡 vLLM server，等待 health check，通过一条不计入结果的 warmup。</li>
+          <li>客户端以 concurrency 1 顺序发送 32 条请求，逐条记录 latency、completion token 与 finish reason。</li>
+          <li>scheduler 按 request ID、逐 verification step 记录 accepted draft tokens；ours 额外记录 tree layout、接受路径和 kernel diagnostics。</li>
+          <li>完成一种方法后关闭服务，再启动另一种方法，保证 GPU 不重叠。</li>
+        </ol>
+        <h3>5.2 离线</h3>
+        <ol>
+          <li>按 request ID 对齐 HTTP 输出、scheduler trace 与 tree trace，并排除 warmup。</li>
+          <li>先计算每个请求的 tau，再汇总 mean、median、p05、p95 与标准差；wall throughput 使用 completion token 总数除以客户端 wall time。</li>
+          <li>检查 32/32 完成、输出非空、日志无错误、trace 可配对和每 step 单 target forward。</li>
+          <li>原始 JSONL 与日志保存在实验节点；仓库提交逐请求 CSV、汇总 JSON、SHA256 和完整中文报告。</li>
+        </ol>
+      </section>
+
+      <section id="correctness">
+        <h2>6. 正确性、输出差异与下一步</h2>
+        <p>32/32 请求均成功。official 与 ours 有 21/32 输出逐字一致；双方都生成 boxed answer 的 21 条中，最终答案全部一致。sample 14 中 official 在 396 token 输出 <code>\boxed{60}</code> 并停止，ours 到 512-token length limit，未输出 boxed answer。ragged/tree 执行改变了 BF16 数值顺序，接近的 greedy logits 可能进入不同后续轨迹，因此这里不声称逐 token 完全等价。</p>
+        <p>当前设施已经足以做有意义的 E2E 测量，也确认了 kernel launch 优化的效果。下一步需要减少 tree budget 与 GDN 展开量，或实现能直接处理共享状态 DAG 的专用 GDN kernel；在这些工作完成前，tau 提升不能表述为服务加速。</p>
+        <p>完整记录：<a href="https://github.com/mokomoko05/dLLMSpec/tree/main/agentWorkSpace/20260916_230418_dflash2_tree_wave_gsm8k32">实验目录</a>、<a href="https://github.com/mokomoko05/dLLMSpec/blob/main/agentWorkSpace/20260916_230418_dflash2_tree_wave_gsm8k32/results/summary.json">汇总 JSON</a>、<a href="https://github.com/mokomoko05/dLLMSpec/blob/main/agentWorkSpace/20260916_230418_dflash2_tree_wave_gsm8k32/results/per_request.csv">逐请求 CSV</a>。</p>
+      </section>
+    </article></main>
+    <footer class="page-footer"><span>DFlash2 packed-tree target backend · 更新于 2026-09-17</span><a href="../">返回内容目录</a></footer>
+  </body>
+</html>

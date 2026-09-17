@@ -6,6 +6,10 @@
     <meta name="description" content="官方 DFlash2 selector 驱动的 packed tree target backend、GSM8K tau 与端到端吞吐结果。">
     <title>DFlash2 packed-tree target backend</title>
     <link rel="stylesheet" href="../qwen38-dflash2-dspark/styles.css">
+    <script>
+      window.MathJax = {tex: {inlineMath: [['$', '$']], displayMath: [['\\[', '\\]']]}};
+    </script>
+    <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
   </head>
   <body>
     <nav class="top-nav" aria-label="站点导航"><a href="../">← 内容目录</a><span>dLLMSpec 实验报告</span></nav>
@@ -33,6 +37,7 @@
           <li><a href="#setup">实验设置</a></li>
           <li><a href="#method">构树与数据流</a></li>
           <li><a href="#backend">Target backend</a></li>
+          <li><a href="#gdn">GDN 结构与构树困难</a></li>
           <li><a href="#results">正式结果</a></li>
           <li><a href="#workflow">在线/离线评测</a></li>
           <li><a href="#correctness">正确性与限制</a></li>
@@ -79,10 +84,70 @@
         <p>上一版依赖拓扑使用 5 conv waves + 5 recurrent waves。packed-path 将 mean latency 从 16.25 秒降到 10.11 秒，wall throughput 从 24.29 提高到 39.05 tok/s，工程吞吐提升 60.7%。</p>
       </section>
 
+      <section id="gdn">
+        <h2>4. GDN 层结构与 Qwen3.8-27B 构树困难</h2>
+        <p>Qwen3.8-27B 是 full attention 与 Gated Delta Network（GDN）交错的 hybrid model。本次 trace 的 64 层中，16 层为 full attention，48 层为 GDN。令 token $t$ 的输入 hidden state 为 $x_t\in\mathbb{R}^{d}$，输入投影为：</p>
+        <p>\[
+          [\bar q_t,\bar k_t,\bar v_t,z_t]=W_{qkvz}x_t,
+          \qquad [b_t,a_t]=W_{ba}x_t.
+        \]</p>
+        <p>$z_t$ 是输出门，$a_t,b_t$ 产生状态衰减与写入强度。投影后的 $q,k,v$ 先经过宽度为 $\kappa$ 的 depthwise causal convolution：</p>
+        <p>\[
+          u_t=\sum_{r=0}^{\kappa-1}C_r\odot
+          [\bar q_{t-r},\bar k_{t-r},\bar v_{t-r}],
+          \qquad [q_t,k_t,v_t]=\operatorname{split}(u_t).
+        \]</p>
+        <p>卷积保留最近 $\kappa-1$ 个 token 的 rolling state。对 $q_t,k_t$ 做 L2 normalization 后，第 $j$ 个 value head 的两个门为：</p>
+        <p>\[
+          g_{t,j}=-\exp(A_{\log,j})\operatorname{softplus}(a_{t,j}+d_j),
+          \qquad \beta_{t,j}=\sigma(b_{t,j}).
+        \]</p>
+        <p>因此 $\exp(g_{t,j})\in(0,1]$ 控制旧状态保留比例，$\beta_{t,j}\in(0,1)$ 控制本 token 的写入强度。每个 value head 维护 $S_{t,j}\in\mathbb{R}^{d_v\times d_k}$；当 value heads 多于 key heads 时，以 $h(j)$ 表示 GVA 分组对应的 query/key head。当前 fused kernel 的精确更新顺序为：</p>
+        <p>\[
+          \widetilde S_{t,j}=\exp(g_{t,j})S_{t-1,j},
+        \]</p>
+        <p>\[
+          e_{t,j}=v_{t,j}-\widetilde S_{t,j}k_{t,h(j)},
+        \]</p>
+        <p>\[
+          S_{t,j}=\widetilde S_{t,j}
+          +\beta_{t,j}e_{t,j}k_{t,h(j)}^{\mathsf T},
+          \qquad
+          o_{t,j}=S_{t,j}\frac{q_{t,h(j)}}{\sqrt{d_k}}.
+        \]</p>
+        <p>$\widetilde S k$ 是状态对当前 value 的预测，$e=v-\widetilde S k$ 是 prediction delta；模型以 rank-1 update 将门控误差写回状态，再用缩放 query 读取。最终输出为：</p>
+        <p>\[
+          y_t=W_o\operatorname{Concat}_j\left(
+          \operatorname{RMSNorm}(o_{t,j})\odot\phi(z_{t,j})
+          \right),
+        \]</p>
+        <p>其中 $\phi$ 由 checkpoint 配置选择 SiLU/Swish 或 sigmoid。于是每个 token 同时产生新的 causal-conv state 与 recurrent matrix state，并严格依赖前一个 token 的这两类状态。</p>
+
+        <h3>4.1 为什么候选树难以直接执行</h3>
+        <p>full attention 可以用 ancestor mask 让每个节点只读取历史 KV 与自己的祖先，因此一次 ragged attention 可按唯一节点执行。GDN 对树节点 $v$ 的递推则是：</p>
+        <p>\[
+          (C_v,S_v)=F\bigl(C_{p(v)},S_{p(v)},x_v\bigr),
+        \]</p>
+        <p>其中 $p(v)$ 是父节点。分叉后的每个 child 都必须复制同一父状态再独立更新。现有 fused GDN kernel 只接收线性序列或 varlen 线性序列，不能接收 parent index，也不能在 kernel 内把一份父状态 fork 给多个 child。</p>
+        <p>ours 因此把逻辑树展开为全部 root-to-leaf paths。若唯一节点集合为 $V$、叶集合为 $L$、root 到叶 $\ell$ 的路径为 $P_\ell$，GDN 实际处理量为：</p>
+        <p>\[
+          N_{\mathrm{path}}=\sum_{\ell\in L}|P_\ell|
+          =\sum_{v\in V}m(v),
+        \]</p>
+        <p>其中 $m(v)$ 是节点 $v$ 的后代叶数量；公共前缀会按后代 leaf 数重复计算。路径打包使每个 GDN 层只启动一次 grouped conv 和一次 fused recurrent kernel，但减少 launch 次数并不减少这部分重复算术。</p>
+        <table><caption>表 2. GDN tree expansion 的实际规模</caption><thead><tr><th>项目</th><th>规模</th><th>含义</th></tr></thead><tbody>
+          <tr><td>唯一 tree nodes</td><td>21</td><td>逻辑树中只保存一份</td></tr>
+          <tr><td>target rows</td><td>22</td><td>anchor + 21 个唯一节点</td></tr>
+          <tr><td>GDN path tokens</td><td>27–73，均值 42.805</td><td>展开路径后的实际 GDN 工作量</td></tr>
+          <tr><td>GDN 层</td><td>48 / 64</td><td>path expansion 成本重复 48 次</td></tr>
+        </tbody></table>
+        <p>official DFlash2 只沿 anchor + 7-token trunk 推进一条状态链。ours 的平均 42.805 个 path tokens 换来了更广的候选覆盖和 13.0% tau 提升，但端到端吞吐仍只有 official 的 55.2%。继续加速需要原生 tree/DAG GDN kernel，使每个唯一节点只更新一次；或者减少 leaf/tree budget、将分枝推迟到叶端，并按 selector 收益与新增 path-token 成本动态剪枝。</p>
+      </section>
+
       <section id="results">
-        <h2>4. GSM8K-32 正式结果</h2>
+        <h2>5. GSM8K-32 正式结果</h2>
         <p>tau 按请求独立计算：<code>tau_i = sum(accepted_draft_tokens + 1) / verification_steps</code>，随后对 32 个请求等权汇总。</p>
-        <table><caption>表 2. official DFlash2 与 ours packed tree</caption><thead><tr><th>方法</th><th>n</th><th>mean tau</th><th>median</th><th>p05 / p95</th><th>mean latency</th><th>wall tok/s</th></tr></thead><tbody>
+        <table><caption>表 3. official DFlash2 与 ours packed tree</caption><thead><tr><th>方法</th><th>n</th><th>mean tau</th><th>median</th><th>p05 / p95</th><th>mean latency</th><th>wall tok/s</th></tr></thead><tbody>
           <tr><td>official DFlash2</td><td>32</td><td>6.349</td><td>6.268</td><td>5.782 / 7.034</td><td>5.575 s</td><td><strong>70.73</strong></td></tr>
           <tr><td>ours packed tree</td><td>32</td><td><strong>7.174</strong></td><td>7.160</td><td>6.734 / 7.610</td><td>10.106 s</td><td>39.05</td></tr>
           <tr><td>ours / official</td><td>—</td><td><strong>1.130×</strong></td><td>—</td><td>—</td><td>1.813×</td><td>0.552×</td></tr>
@@ -91,15 +156,15 @@
       </section>
 
       <section id="workflow">
-        <h2>5. 在线与离线评测流程</h2>
-        <h3>5.1 在线</h3>
+        <h2>6. 在线与离线评测流程</h2>
+        <h3>6.1 在线</h3>
         <ol>
           <li>启动单卡 vLLM server，等待 health check，通过一条不计入结果的 warmup。</li>
           <li>客户端以 concurrency 1 顺序发送 32 条请求，逐条记录 latency、completion token 与 finish reason。</li>
           <li>scheduler 按 request ID、逐 verification step 记录 accepted draft tokens；ours 额外记录 tree layout、接受路径和 kernel diagnostics。</li>
           <li>完成一种方法后关闭服务，再启动另一种方法，保证 GPU 不重叠。</li>
         </ol>
-        <h3>5.2 离线</h3>
+        <h3>6.2 离线</h3>
         <ol>
           <li>按 request ID 对齐 HTTP 输出、scheduler trace 与 tree trace，并排除 warmup。</li>
           <li>先计算每个请求的 tau，再汇总 mean、median、p05、p95 与标准差；wall throughput 使用 completion token 总数除以客户端 wall time。</li>
@@ -109,7 +174,7 @@
       </section>
 
       <section id="correctness">
-        <h2>6. 正确性、输出差异与下一步</h2>
+        <h2>7. 正确性、输出差异与下一步</h2>
         <p>32/32 请求均成功。official 与 ours 有 21/32 输出逐字一致；双方都生成 boxed answer 的 21 条中，最终答案全部一致。sample 14 中 official 在 396 token 输出 <code>\boxed{60}</code> 并停止，ours 到 512-token length limit，未输出 boxed answer。ragged/tree 执行改变了 BF16 数值顺序，接近的 greedy logits 可能进入不同后续轨迹，因此这里不声称逐 token 完全等价。</p>
         <p>当前设施已经足以做有意义的 E2E 测量，也确认了 kernel launch 优化的效果。下一步需要减少 tree budget 与 GDN 展开量，或实现能直接处理共享状态 DAG 的专用 GDN kernel；在这些工作完成前，tau 提升不能表述为服务加速。</p>
         <p>完整记录：<a href="https://github.com/mokomoko05/dLLMSpec/tree/main/agentWorkSpace/20260916_230418_dflash2_tree_wave_gsm8k32">实验目录</a>、<a href="https://github.com/mokomoko05/dLLMSpec/blob/main/agentWorkSpace/20260916_230418_dflash2_tree_wave_gsm8k32/results/summary.json">汇总 JSON</a>、<a href="https://github.com/mokomoko05/dLLMSpec/blob/main/agentWorkSpace/20260916_230418_dflash2_tree_wave_gsm8k32/results/per_request.csv">逐请求 CSV</a>。</p>

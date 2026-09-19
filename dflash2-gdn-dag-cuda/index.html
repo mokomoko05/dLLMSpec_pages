@@ -155,6 +155,7 @@
   <p>下一阶段已准备五个满足128样本的数据集：GSM8K、MATH-500、HumanEval、MBPP和LiveCodeBench。计划在同一2×A100节点同时运行chain/tree，每个数据集各128 prompts，正式比较per-request tau与completion tok/s；AIME25和MT-Bench因总样本不足128不混入主矩阵。新结果发布前，本页只把GSM8K-32作为已完成结论。</p>
 </section>
 <section id="records" class="references"><h2>11. 原始记录</h2><ol>
+  <li><a href="CODE_AUDIT.md">完整代码diff、行号、profile与正式runner审查清单</a></li>
   <li><a href="https://github.com/mokomoko05/dLLMSpec/tree/main/agentWorkSpace/20260919_103000_noncompute_p0_p4">P0–P4最终报告、正式结果与重复chain</a></li>
   <li><a href="https://github.com/mokomoko05/dLLMSpec/tree/main/agentWorkSpace/20260919_071500_best_correlated_profile">matched chain/tree CUDA correlation profile</a></li>
   <li><a href="https://github.com/mokomoko05/dLLMSpec/tree/main/agentWorkSpace/20260918_111110_gdn_depth_parallel_kernel">完整矩阵维度与E2E数据流</a></li>

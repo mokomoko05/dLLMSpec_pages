@@ -1,23 +1,167 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="Qwen3.8-27B 原生 CUDA GDN 树核，GSM8K-32 official/packed/CUDA 同轮吞吐对照。">
-<title>DFlash2 GDN 原生 DAG CUDA 实验</title><link rel="stylesheet" href="styles.css">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Qwen3.8-27B DFlash2 21-node tree：建树算法、flattened target 数据流、CUDA 工程优化、profile 与最终 E2E 加速。">
+  <title>DFlash2 Tree：从建树到 E2E 加速</title>
+  <link rel="stylesheet" href="styles.css">
 </head>
 <body>
 <nav class="top-nav" aria-label="站点导航"><a href="../">← 内容目录</a><span>dLLMSpec 实验报告</span></nav>
 <main><article>
-<header class="article-header"><h1>DFlash2 GDN 原生 DAG CUDA 实验</h1><p class="subtitle">Qwen3.8-27B · 21-node tree · 同轮 GSM8K-32 端到端吞吐</p><dl class="article-meta"><div><dt>实验时间</dt><dd>2026-09-17</dd></div><div><dt>硬件</dt><dd>独占 1× NVIDIA A100 80GB PCIe</dd></div><div><dt>Target / Draft</dt><dd>Qwen3.8-27B / 官方 Qwen3.8-27B-DFlash2</dd></div><div><dt>状态</dt><dd>official、packed、CUDA 各 32/32 完成；CUDA 尚未超过 official</dd></div></dl></header>
-<section class="abstract"><h2>摘要</h2><p>为混合 GDN target 的候选树实现按父节点索引执行的原生 CUDA kernel：causal conv 和 gated-delta recurrent state 按深度波次计算，每个 anchor/tree 节点只计算一次，不再把 root-to-leaf 公共前缀重复展开。独占同一 GPU、相同框架 commit 和请求口径的 GSM8K-32 中，CUDA tree 的端到端吞吐为 <strong>47.858 tok/s</strong>，相比同轮 packed-path tree 的 <strong>38.621 tok/s 提升 23.9%</strong>；但低于 official DFlash2 的 <strong>70.103 tok/s</strong>。先前 GPU 占位进程未停止的测试已标为无效，不进入本结果。</p></section>
-<nav class="toc"><h2>目录</h2><ol><li><a href="#setup">同口径设置</a></li><li><a href="#kernel">CUDA DAG kernel 与接入</a></li><li><a href="#results">完整 32 条吞吐结果</a></li><li><a href="#profile">单步分段 profile</a></li><li><a href="#optimization">逐项优化结果</a></li><li><a href="#correctness">输出差异与限制</a></li><li><a href="#lifecycle">占位进程与复现</a></li></ol></nav>
-<section id="setup"><h2>1. 同口径设置</h2><table><tbody><tr><th>框架</th><td>同一 vLLM fork <code>exp/gdn-dag-cuda@b07216c</code>；按 backend 开关分别运行 official、packed、CUDA</td></tr><tr><th>硬件与精度</th><td><code>lengjingwen54-0</code> GPU0 独占 A100 80GB；PyTorch 2.11+cu129、BF16、eager</td></tr><tr><th>模型</th><td>Qwen3.8-27B target + 官方 DFlash2 drafter/selector</td></tr><tr><th>数据</th><td>GSM8K 前 32 条、同序；每方法 1 条 max_tokens=128 的不计时 warmup</td></tr><tr><th>请求</th><td>greedy、thinking off、concurrency=1、seed=20260822+样本编号、<code>max_tokens=512</code></td></tr><tr><th>服务</th><td>1 GPU、max-model-len 4096、max-num-seqs 1、<code>gpu_memory_utilization=0.9</code>、7 个 draft token</td></tr></tbody></table><p>一轮只运行一个方法，切换方法时先关闭服务并确认 GPU 无其他 compute process；三组按 official → packed → CUDA 顺序执行。</p></section>
-<section id="kernel"><h2>2. CUDA DAG kernel 与 target 接入</h2><p>tree 的 anchor 是 row 0，候选节点映射到 row 1…21。每个节点的卷积 rolling state 和 recurrent matrix state 从自己的父节点读取，siblings 相互独立。CUDA launcher 按深度顺序启动 kernel 形成依赖 barrier；conv 每块处理一个节点，recurrent 每个 warp 处理一个 value-head state row，以 float32 更新状态。常规输入投影、post-conv q/k 归一化和门值准备、输出投影与 full-attention ragged kernel 均保持原实现。</p><p>旧 packed backend 在同一组树中平均每 GDN 层处理 42.805 个 root-to-leaf path tokens；CUDA backend 只处理 anchor+21 个 unique rows。两者在 48 个 GDN 层上均运行，并仅提交最终 accepted path 的状态。数值单测比较 PyTorch reference 与旧 backend，通过 BF16 输出和 FP32 state 容差；真实服务 trace 确认每 verification step 单次 target forward。</p></section>
-<section id="results"><h2>3. GSM8K-32 完整正式结果</h2><p>从每个请求的 scheduler trace 计算 <code>tau = (accepted_draft_tokens + verification_steps)/verification_steps</code>，再对请求等权平均。吞吐是正式 32 条实际 completion token 总数除以客户端墙钟时间；不包含服务加载和 warmup。</p><table><caption>表 1. 三方法同轮正式 E2E 对照</caption><thead><tr><th>方法</th><th>完成</th><th>输出 token</th><th>mean tau</th><th>mean latency</th><th>wall tok/s</th></tr></thead><tbody><tr><td>official DFlash2</td><td>32/32</td><td>12,654</td><td>6.349</td><td>5.625 s</td><td><strong>70.103</strong></td></tr><tr><td>packed-path tree</td><td>32/32</td><td>12,648</td><td>7.174</td><td>10.217 s</td><td><strong>38.621</strong></td></tr><tr><td>原生 CUDA DAG tree</td><td>32/32</td><td>12,479</td><td>7.155</td><td>8.131 s</td><td><strong>47.858</strong></td></tr></tbody></table><p><strong>CUDA / packed = 1.239×</strong>，CUDA / official = 0.683×；CUDA / packed mean tau = 0.997×。CUDA 减少 tree backend 开销，但没有达到官方单路径的端到端吞吐。历史 official / packed 分别为 70.73 / 39.05 tok/s；由于历史框架 commit 与本轮不同，不跨轮计算正式 speedup。</p></section>
-<section id="profile"><h2>4. 单步分段 profile：剩余瓶颈</h2><p>2026-09-17 在独占同一张 A100 上，对 packed 和 CUDA 的第一条 GSM8K warmup 请求的第 10 个 verification step 进行 CPU/CUDA profiler 采样：两者均为 anchor+21 nodes、6 leaves、7-token 最长路径；这只是代表性定位样本，<strong>不是上述 32 条正式结果的平均值</strong>。profile 模式显存利用率 0.84，trace 插桩明显增加主机开销，不能直接当作生产 latency。</p><table><caption>表 2. CUDA backend 单 step 插桩：CPU inclusive scope 与 GPU kernel</caption><thead><tr><th>代码段</th><th>CPU scope</th><th>GPU kernel</th><th>判断</th></tr></thead><tbody><tr><td>48×GDN attention</td><td>93.5 ms</td><td>子段另计</td><td>单步 CPU 最大类别</td></tr><tr><td>16×full attention</td><td>60.1 ms</td><td>子段另计</td><td>tree 专有开销尚未消除</td></tr><tr><td>其中 ragged 历史 KV/path 打包</td><td>32.5 ms</td><td>4.17 ms</td><td>每叶重复 tensor 构造、索引与历史复制</td></tr><tr><td>其中真正 FlashAttention kernel</td><td>1.34 ms</td><td>0.61 ms</td><td>主要瓶颈不是 FA 核</td></tr><tr><td>64×MLP</td><td>11.8 ms</td><td>23.86 ms</td><td>单类 GPU 计算最大，22 rows 全层执行</td></tr><tr><td>48×GDN conv / recurrent</td><td>6.05 / 4.68 ms</td><td>12.54 / 6.65 ms</td><td>8+8 depth waves/层，合计 768 launches/step</td></tr></tbody></table><p>CUDA 的插桩 step 为 222.2 ms；GPU kernel+copy busy union 86.1 ms，粗略 idle gap 134.3 ms。GPU 大量等待 host 小算子与 kernel 提交，但这些绝对数值包含 profiler 开销，不能预言优化收益。优先改进按叶重复的 KV/path 打包，随后减少 GDN 768 次 depth launch、考虑状态复用，最后在 12/16/21 节点预算上平衡 tau 与 64 层的投影/MLP 成本。详细分段和可复现 trace 分析见 <a href="https://github.com/mokomoko05/dLLMSpec/tree/main/agentWorkSpace/20260917_220711_gdn_dag_segment_profile">profiler 实验报告</a>。</p></section>
-<section id="optimization"><h2>5. 逐项优化结果</h2><p>按照 profile 排名，在新 vLLM 分支上依次做三项彼此隔离的实现与正式 32 请求测试。每组在独占 A100、相同模型/数据/请求参数下顺序运行；每项先做数值与 smoke，再运行 32/32。只有第一个优化产生明确 E2E 收益。</p><table><caption>表 3. A：ragged tree index plan 向量化与跨层复用</caption><thead><tr><th>layout</th><th>完成</th><th>mean tau</th><th>wall</th><th>tok/s</th><th>输出</th></tr></thead><tbody><tr><td>legacy leaf-by-leaf</td><td>32/32</td><td>7.155</td><td>269.203 s</td><td>46.355</td><td>基准</td></tr><tr><td>vectorized/reused</td><td>32/32</td><td>7.155</td><td>237.428 s</td><td><strong>52.559</strong></td><td>32/32 逐字相同</td></tr></tbody></table><p>新实现从 CPU 已有 tree topology 一次生成并缓存 query/key row indices、first-output scatter 与 cu_seqlens，16 个 full-attention 层复用；每层只进行一次 flattened gather。BF16 CUDA 在 history 0/32/103/511、每点五个 seed 上与旧实现逐元素完全一致。正式 throughput 为 <strong>1.134×（+13.4%）</strong>，因此采用。</p><table><caption>表 4. B：GDN depth launches 合并</caption><thead><tr><th>launch</th><th>isolated conv+recurrent</th><th>E2E tok/s</th><th>mean tau</th><th>结论</th></tr></thead><tbody><tr><td>depth-wave</td><td>0.539 ms</td><td><strong>52.989</strong></td><td>7.155</td><td>保留</td></tr><tr><td>topological one-launch</td><td>0.153 ms</td><td>52.302</td><td>7.155</td><td>不采用</td></tr></tbody></table><p>one-launch conv/recurrent 在随机 FP32/BF16 小树和生产 22-row 形状上与 depth-wave 逐元素一致，microbenchmark 快 3.53×；但正式 E2E 为 0.987×，没有可测收益。串行遍历节点可能损失并行度和 cache locality，且 launch 已不是向量化后的主导项，因此默认仍使用 depth-wave。</p><table><caption>表 5. C：固定 vectorized + depth 的 tree budget 扫描</caption><thead><tr><th>nodes</th><th>verification steps</th><th>mean tau</th><th>wall</th><th>tok/s</th></tr></thead><tbody><tr><td>21</td><td>1,750</td><td><strong>7.155</strong></td><td>239.863 s</td><td><strong>52.026</strong></td></tr><tr><td>16</td><td>1,778</td><td>7.042</td><td>242.450 s</td><td>51.470</td></tr><tr><td>12</td><td>1,833</td><td>6.904</td><td>245.096 s</td><td>51.429</td></tr></tbody></table><p>简单缩小节点预算减少每 step 计算，却因 tau 下降增加 verification steps，最终更慢；保留 21 nodes。第一次 budget 尝试曾被 runner 的硬编码 21 覆盖，三个 trace 都显示 21 nodes，已明确标为无效并修复后重跑上表。当前推荐配置为 <code>VLLM_DFLASH2_RAGGED_LAYOUT=vectorized</code>、<code>VLLM_DFLASH2_GDN_DAG_LAUNCH=depth</code>、21 nodes。最好新轮约 52–53 tok/s，仍未超过历史 official 的 70.10 tok/s。完整失败记录、commit 映射和 raw SHA256 见 <a href="https://github.com/mokomoko05/dLLMSpec/tree/main/agentWorkSpace/20260917_222654_gdn_dag_stepwise_optimization">逐项优化实验目录</a>。</p></section>
-<section id="redundancy"><h2>GDN冗余清理（2026-09-18）</h2><p>同commit独占A100、GSM8K32对照，移除未用recurrent snapshot、重复clone并缓存48层共用topology：51.631 → <strong>60.515 tok/s（+17.2%）</strong>，mean tau均7.155，32/32输出逐字一致。该项不改变depth并行；CUDA Graph/CTA内depth并行仍为待实现方案。运行后占位已恢复。<a href="https://github.com/mokomoko05/dLLMSpec/tree/main/agentWorkSpace/20260918_001000_gdn_redundancy">详细记录及launch设计</a>。</p></section><section id="correctness"><h2>6. 正确性、输出差异与性能边界</h2><p>三组每组 32/32 请求成功，server 日志没有 ERROR、Traceback、OOM 或 CUDA error，scheduler trace 与请求均可对齐。CUDA 与 packed 的最终文本逐字相同 <strong>25/32</strong>；差异样本编号 2、12、14、16、24、27、31。样本 14、24 中 packed 达到 512-token 上限，而 CUDA 正常停止并输出 boxed answer；CUDA 总输出因此比 packed 少 169 tokens。浮点累加顺序不同可能改变后续生成轨迹，本结果不声称逐字等价或相同生成工作量；吞吐按事先固定的实际在线请求口径计算。</p></section>
-<section id="lifecycle"><h2>7. GPU 占位进程管理与原始记录</h2><p>早期测试错误地保留持续运行 GEMM 的 6.7 GiB GPU0 占位，导致竞争和 OOM；这些测量全部标为无效。本轮于 20:56 CST 停止占位 PID 49236、确认 GPU 空闲后运行三组，21:16 CST 重启占位 PID 53501 并核对显存。复现需使用带独占检查和退出恢复 trap 的 matrix runner，不能直接将旧受争用数字并入结论。</p><p>精简 summary、逐请求 CSV、完整命令、代码 commit、错误记录与原始文件 SHA256 均见 <a href="https://github.com/mokomoko05/dLLMSpec/tree/main/agentWorkSpace/20260917_191353_gdn_dag_cuda">dLLMSpec 实验目录</a>；原始 JSONL/trace 和 server log 保留在运行节点 <code>/root/.local/share/dLLMSpec/formal_20260917_gdn_dag_cuda/e2e32_uncontended/</code>，节点释放后可能丢失。旧 packed-path 基线报告见<a href="../dflash2-packed-tree/">历史报告</a>。</p></section>
-<section class="references"><h2>原始记录</h2><ol><li><a href="https://github.com/mokomoko05/dLLMSpec/tree/main/agentWorkSpace/20260917_191353_gdn_dag_cuda">本次实验报告、代码映射、逐请求结果与校验和</a></li><li><a href="../dflash2-packed-tree/">历史 packed-tree 方法与结果</a></li></ol></section>
-</article></main><footer class="page-footer"><span>DFlash2 GDN 原生 DAG CUDA 实验 · 2026-09-17（含分段 profile 与逐项优化）</span><a href="../">返回内容目录</a></footer>
+<header class="article-header">
+  <h1>DFlash2 Tree：从建树到 E2E 加速</h1>
+  <p class="subtitle">Qwen3.8-27B · protected-trunk best-first tree · flattened hybrid target · GPU build/verify/commit</p>
+  <dl class="article-meta">
+    <div><dt>实验跨度</dt><dd>2026-09-12—19</dd></div>
+    <div><dt>最终硬件</dt><dd>独占 1× NVIDIA A100 80GB PCIe</dd></div>
+    <div><dt>模型</dt><dd>Qwen3.8-27B / 官方 Qwen3.8-27B-DFlash2</dd></div>
+    <div><dt>最终状态</dt><dd>GSM8K-32：tree 80.180 tok/s，official chain 两轮均值 70.373 tok/s</dd></div>
+  </dl>
+</header>
+<section class="abstract">
+  <h2>摘要</h2>
+  <p>本页清理并取代旧版阶段报告，完整记录 ours tree 从候选构造、单次 flattened target forward、GDN 父状态执行、paged parent-sparse attention、GPU verification 到 grouped cache commit 的最终路径。Tree 使用与 official DFlash2 完全相同的 draft、candidate selector 和 7-token protected trunk，只在 21-node 预算内加入高概率分枝。经过 unique-node GDN、专用 attention、persistent recurrent、元数据复用、GPU verify/build 和 device-side dynamic commit，tree 的 verification-step wall latency 与 chain 已在噪声范围内对齐；GSM8K-32 上 mean tau 从 6.3491 提高到 7.1209，最终吞吐从 chain 两轮均值 70.373 提高到 80.180 tok/s，即 <strong>1.139×（+13.94%）</strong>。结论限于 A100 SM80、TP1、batch/concurrency 1、eager、无 CUDA Graph。</p>
+</section>
+<nav class="toc"><h2>目录</h2><ol>
+  <li><a href="#scope">问题与可比口径</a></li>
+  <li><a href="#builder">建树方法</a></li>
+  <li><a href="#dataflow">Tree target 数据流</a></li>
+  <li><a href="#kernels">关键 CUDA 实现</a></li>
+  <li><a href="#verify">验证与状态提交</a></li>
+  <li><a href="#history">优化演进</a></li>
+  <li><a href="#profile">对应算子 profile</a></li>
+  <li><a href="#results">最终 E2E 对齐</a></li>
+  <li><a href="#correctness">正确性与失败尝试</a></li>
+  <li><a href="#limits">边界与下一步实验</a></li>
+  <li><a href="#records">原始记录</a></li>
+</ol></nav>
+<section id="scope"><h2>1. 问题与可比口径</h2>
+  <p>Official DFlash2 每轮由 drafter 和 selector 产生一条 7-token chain，target 输入为 anchor 加 7 个 proposal，共 8 rows。Ours 保留该完整 chain，再加入分枝，target 输入为 anchor 加 21 个唯一 tree nodes，共 22 rows。算法收益来自同一 target verification 中覆盖更多候选路径；工程目标不是让 22 rows 的算术量消失，而是避免公共前缀重复、Python/CPU 建树、逐叶 KV 复制、逐节点 kernel launch、host verification 和逐层 commit 等额外开销，使每个 verification step 的关键路径接近 8-row chain。</p>
+  <table><tbody>
+    <tr><th>框架与精度</th><td>同一 vLLM fork；PyTorch 2.11+cu129；target BF16，GDN recurrent state FP32；TP1，eager</td></tr>
+    <tr><th>模型结构</th><td>64 decoder layers = 48 GDN + 16 full attention；每层均有 dense SwiGLU MLP</td></tr>
+    <tr><th>正式数据</th><td>GSM8K 顺序前32条；greedy；thinking off；max_tokens=512；concurrency=1；固定seed；1条warmup</td></tr>
+    <tr><th>吞吐</th><td>正式 completion tokens / 客户端请求 wall；不含加载与warmup</td></tr>
+    <tr><th>tau</th><td>先按请求计算 <code>1 + accepted_draft_tokens / verification_steps</code>，再对请求等权平均</td></tr>
+    <tr><th>独占</th><td>正式运行前停止已知GPU placeholder，确认无其他compute process；退出trap恢复并核对唯一占位</td></tr>
+  </tbody></table>
+  <p class="note">历史受 placeholder 竞争、不同 commit、packed-path 重复计算或 profiler 插桩影响的数字只用于说明演进，不与最终矩阵直接计算 speedup。</p>
+</section>
+<section id="builder"><h2>2. 建树方法：保护 official trunk 的 best-first expansion</h2>
+  <h3>2.1 Selector 输入</h3>
+  <p>DFlash2 draft 同时处理 7 个 proposal slots。每个 slot 保留 top-16 候选，产生 <code>candidate_ids[B,7,16]</code>、<code>unary_logits[B,7,16]</code>、draft hidden <code>[B,7,5120]</code>，官方 candidate selector 再产生 <code>edge_scores[B,7,16,16]</code>。<code>edge_scores[b,t,p,c]</code>表示 slot <code>t</code> 中，从前一 slot rank <code>p</code> 转移到当前 rank <code>c</code> 的分数。</p>
+  <h3>2.2 Protected trunk</h3>
+  <div class="math-block"><span class="math-line">r<sub>t</sub> = argmax<sub>c</sub> log_softmax(edge_scores[t,r<sub>t−1</sub>,c])，r<sub>−1</sub>=0</span><span class="math-note">连续7步严格复现 official selector walk；这7个节点先写入且永不裁剪。</span></div>
+  <h3>2.3 额外分枝</h3>
+  <p>每个候选节点保存 <code>(parent, depth, token, rank, cumulative_log_probability)</code>。Builder 将 root 和 trunk 各前缀的非重复 successor 放入稳定最大堆，按累计 log probability best-first 弹出；只有父节点已物化才允许加入，因此始终 prefix-closed。每个 parent 最多2个不同 token child，总 draft-node 预算21，深度不超过7；同分数用单调 counter 稳定决胜。先占用7个 trunk nodes，剩余最多14个节点分配给高概率分枝。</p>
+  <figure class="flow-figure"><div class="token-tree-wrap"><svg class="token-tree" viewBox="0 0 720 240" role="img" aria-label="Protected trunk and best-first branches">
+    <line class="edge accepted" x1="55" y1="120" x2="135" y2="120"/><line class="edge accepted" x1="155" y1="120" x2="235" y2="120"/><line class="edge accepted" x1="255" y1="120" x2="335" y2="120"/><line class="edge accepted" x1="355" y1="120" x2="435" y2="120"/><line class="edge accepted" x1="455" y1="120" x2="535" y2="120"/><line class="edge accepted" x1="555" y1="120" x2="635" y2="120"/>
+    <line class="edge branch" x1="145" y1="120" x2="235" y2="55"/><line class="edge branch" x1="245" y1="55" x2="335" y2="55"/><line class="edge branch" x1="345" y1="120" x2="435" y2="185"/><line class="edge branch" x1="445" y1="185" x2="535" y2="185"/>
+    <circle class="node accepted" cx="45" cy="120" r="14"/><circle class="node accepted" cx="145" cy="120" r="14"/><circle class="node accepted" cx="245" cy="120" r="14"/><circle class="node accepted" cx="345" cy="120" r="14"/><circle class="node accepted" cx="445" cy="120" r="14"/><circle class="node accepted" cx="545" cy="120" r="14"/><circle class="node accepted" cx="645" cy="120" r="14"/>
+    <circle class="node branch" cx="245" cy="55" r="14"/><circle class="node branch" cx="345" cy="55" r="14"/><circle class="node branch" cx="445" cy="185" r="14"/><circle class="node branch" cx="545" cy="185" r="14"/>
+    <text x="45" y="120">root</text><text x="145" y="120">t1</text><text x="245" y="120">t2</text><text x="345" y="120">t3</text><text x="445" y="120">t4</text><text x="545" y="120">t5</text><text x="645" y="120">t6/7</text><text x="245" y="55">b1</text><text x="345" y="55">b2</text><text x="445" y="185">b3</text><text x="545" y="185">b4</text>
+    <text class="annotation" x="22" y="24">绿色：受保护 official trunk；蓝色：按累计 selector 概率加入的额外分枝</text>
+  </svg></div><figcaption>示意图只展示拓扑；正式树为21个draft nodes，root/anchor另计。</figcaption></figure>
+  <h3>2.4 最终 GPU builder</h3>
+  <p>早期版本把 selector tensor 拷到CPU，用Python对象和heap建树，再把parent/depth/mask上传GPU。最终SM80路径由一个CUDA block对应一个请求、一个thread串行执行同一稳定heap算法；串行是有意选择，因为固定规模仅7×16候选、21个输出，目标是消除同步与对象开销而非扩大并行。Kernel直接输出 token、local parent、depth、candidate rank、trunk、含anchor的full parent/depth、ancestor rows和<code>[21,21]</code> mask。100组随机输入与CPU <code>OfficialDFlash2TreeBuilder</code>逐位一致；非SM80或显式关闭时回退CPU。</p>
+</section>
+<section id="dataflow"><h2>3. 一次 tree speculative step 的完整数据流</h2>
+  <figure class="flow-figure"><div class="flow-stack">
+    <div class="flow-node"><strong>Confirmed prefix / hybrid cache</strong><span>16层paged KV；48层conv窗口与FP32 recurrent state</span></div>
+    <div class="flow-node"><strong>DFlash2 draft + selector</strong><span>7 slots × top16；edge_scores [1,7,16,16]</span></div>
+    <div class="flow-node accent"><strong>GPU protected-trunk tree builder</strong><span>21 tokens + parent/depth/ancestor topology，全部留在device</span></div>
+    <div class="flow-node accent"><strong>Flattened target forward</strong><span>anchor + 21 unique nodes = hidden [22,5120]；64层只forward一次</span></div>
+    <div class="flow-node accent"><strong>GPU tree verify</strong><span>沿prediction→唯一child逐深度匹配；输出最多8行selected rows与device count</span></div>
+    <div class="flow-node result"><strong>Grouped commit + scheduler</strong><span>提交anchor+accepted path的KV/conv/SSM状态与bonus token</span></div>
+  </div><figcaption>公共前缀节点只作为一个row计算；siblings依靠parent索引读取不同状态，不再逐leaf replay。</figcaption></figure>
+  <h3>3.1 Target公共骨架</h3>
+  <p>每层输入为<code>X[N,5120]</code>，chain的N=8，tree的N=22。64层按<code>[GDN,GDN,GDN,FullAttention]×16</code>排列；每层随后执行dense SwiGLU：<code>[N,5120]×[5120,34816]→[N,34816]</code>，SiLU×up得到<code>[N,17408]</code>，再投影回<code>[N,5120]</code>。因此MLP与投影的22-row真实算量是算法覆盖更多节点的必要成本，不归类为工程冗余。</p>
+  <h3>3.2 GDN层（48层）</h3>
+  <p>输入投影生成q/k <code>[22,16,128]</code>、v/z <code>[22,48,128]</code>、a/b <code>[22,48]</code>；depthwise causal conv宽4。每个节点沿parent读取自己的3-token rolling window。Recurrent state为每value head一个<code>[128,128]</code> FP32矩阵，总形状<code>[48,128,128]</code>；更新式为：</p>
+  <div class="math-block"><span class="math-line">S<sub>v</sub> = exp(g<sub>v</sub>) S<sub>parent(v)</sub> + β<sub>v</sub>(v<sub>v</sub> − exp(g<sub>v</sub>) S<sub>parent(v)</sub>k<sub>v</sub>)k<sub>v</sub><sup>T</sup></span><span class="math-line">o<sub>v</sub> = S<sub>v</sub>q<sub>v</sub>/√128</span></div>
+  <p>最终persistent/tiled kernel按拓扑遍历，siblings并行，保留每个节点状态供verification后选择性commit。显式PTX数学路径与参考实现在211,200个g/beta值上精确一致，并移除SM80校正kernel。</p>
+  <h3>3.3 Full attention层（16层）</h3>
+  <p>QKV投影逻辑输出<code>q/gate [22,24,256]</code>与<code>k,v [22,4,256]</code>。最终paged parent-sparse v2 kernel直接读取4-head paged history KV，以parent/ancestor关系限制每个query只访问已确认历史和自身祖先，GQA的6个query heads复用同一KV head；不再按leaf复制history或构造通用dense mask。输出<code>[22,24,256]</code>经sigmoid gate和O projection返回<code>[22,5120]</code>。</p>
+  <h3>3.4 LM head</h3>
+  <p>最终hidden <code>[22,5120]</code>乘词表权重<code>[248320,5120]</code>得到logits <code>[22,248320]</code>并argmax。相比chain的8 rows，这仍是必要的node计算量，也是profile中不能靠消除launch完全抹掉的部分。</p>
+</section>
+<section id="kernels"><h2>4. 关键 CUDA 工程实现</h2>
+  <table><thead><tr><th>阶段</th><th>早期问题</th><th>最终路径</th></tr></thead><tbody>
+    <tr><td>Tree topology</td><td>GPU→CPU selector同步、Python heap、metadata H2D</td><td>固定规模GPU serial heap，一次输出全部device topology</td></tr>
+    <tr><td>GDN conv/prep</td><td>root-to-leaf公共前缀重复；额外中间tensor/launch</td><td>all-node parent gather；exact fused conv-prep；topology每step缓存并48层复用</td></tr>
+    <tr><td>GDN recurrent</td><td>每depth/节点launch与global parent-state访问</td><td>persistent/tiled CUDA；每层一个recurrent launch；GQA-like head tile</td></tr>
+    <tr><td>Full attention</td><td>逐leaf复制history与varlen packing</td><td>paged parent-sparse v2，直接读paged KV；GQA KV复用与split-KV专门路径</td></tr>
+    <tr><td>Verify</td><td>predictions D2H，CPU遍历leaf paths</td><td>GPU child lookup；固定8-row workspace；accepted count留在device</td></tr>
+    <tr><td>Commit</td><td>48层逐层index/select/copy与host accepted count</td><td>一个grouped GDN/conv commit + 一个grouped attention commit，device count动态mask</td></tr>
+    <tr><td>Diagnostics</td><td>每step D2H、mkdir/open/JSON write</td><td>默认每请求仅首step summary；正式request acceptance trace仍完整</td></tr>
+  </tbody></table>
+  <p>最终tree不是把chain kernel简单复制21次，也不是逐leaf执行target。它以22行小矩阵GEMM保留节点并行，以parent topology承担依赖，以专用attention/GDN kernel避免路径复制；verification与commit也不再把动态接受长度拉回host。CUDA Graph在本阶段明确未适配。</p>
+</section>
+<section id="verify"><h2>5. GPU verification、采样与cache提交</h2>
+  <p>Builder保证同一parent下token唯一，因此从anchor prediction出发，每层查找匹配token child会得到唯一greedy路径。GPU verify最多走7层，输出固定容量<code>selected_rows[8]</code>、<code>sampled_token_ids[8]</code>、device scalar <code>num_sampled</code>/<code>num_rejected</code>以及诊断decision。200组随机树覆盖local/full parent布局、accepted 0…7和非默认stream，均与CPU leaf遍历严格一致。</p>
+  <p>随后两个grouped kernels提交状态：16个full-attention层写入选中rows的4-head K/V；48个GDN层写入FP32 SSM state与最后接受位置的conv rolling window。Dynamic commit读取device accepted count并mask固定8-row workspace，非trace step没有decision D2H。以tau=7.120866计，48层selected SSM读写约2.150 GB/step；1.434 ms对应约1.50 TB/s，已接近A100 HBM带宽上界，所以后续纯layout微调空间有限。</p>
+</section>
+<section id="history"><h2>6. 从正确性reference到最终默认路径</h2>
+  <table><caption>主要里程碑；不同阶段commit与运行时环境可能不同，只在标明的同轮对照内解释收益。</caption><thead><tr><th>阶段</th><th>GSM8K-32 tok/s</th><th>关键变化</th><th>状态</th></tr></thead><tbody>
+    <tr><td>初始unique-node CUDA DAG</td><td>47.858</td><td>替代packed-path公共前缀重复，仍有ragged packing和大量launch</td><td>历史起点</td></tr>
+    <tr><td>Vectorized attention plan</td><td>52.559</td><td>每step构建一次索引，16层复用</td><td>采用</td></tr>
+    <tr><td>GDN冗余清理</td><td>60.515</td><td>删除无用snapshot/clone，48层共享topology</td><td>采用</td></tr>
+    <tr><td>Paged parent-sparse v2</td><td>约63.6–64.1</td><td>直接读取paged history，替代逐leaf物化</td><td>采用</td></tr>
+    <tr><td>Persistent/tiled GDN + grouped commit</td><td>约67.6</td><td>recurrent每层一个launch；commit合并</td><td>采用</td></tr>
+    <tr><td>Metadata reuse / exact gating</td><td>70.2–72.4</td><td>索引每step复用；去掉SM80 correction launch</td><td>采用</td></tr>
+    <tr><td>GPU verify</td><td>73.48</td><td>移除CPU leaf verify与大部分同步</td><td>采用</td></tr>
+    <tr><td>Device count / dynamic commit</td><td>75.237</td><td>非trace step不再D2H accepted decision</td><td>采用</td></tr>
+    <tr><td>GPU builder/topology</td><td>78.208 / 80.735</td><td>消除CPU heap和GPU↔CPU↔GPU metadata路径</td><td>采用；两轮文本一致</td></tr>
+    <tr><td>最终zero-env默认tree</td><td><strong>80.180</strong></td><td>SM80默认GPU build+verify；summary trace</td><td>当前推荐</td></tr>
+  </tbody></table>
+</section>
+<section id="profile"><h2>7. 与official chain的对应算子profile</h2>
+  <p>在相同history、相同protected trunk的step10/11/12做CUDA launch correlation；chain 8 rows、tree 22 rows，全部CUDA工作可归因。该profile位于最终P0–P2之前，用来指引优化，不把各嵌套scope增量相加，也不把插桩时间当最终E2E wall。</p>
+  <table><thead><tr><th>对应部分</th><th>Chain GPU ms</th><th>Tree GPU ms</th><th>增量</th><th>解释</th></tr></thead><tbody>
+    <tr><td>完整target step kernels</td><td>45.076</td><td>56.122</td><td>+11.047</td><td>tree实际22-row计算与commit总差</td></tr>
+    <tr><td>target model forward</td><td>43.483</td><td>53.028</td><td>+9.545</td><td>不含完整host/draft/scheduler</td></tr>
+    <tr><td>48×GDN attention</td><td>12.096</td><td>15.388</td><td>+3.292</td><td>其中recurrent +1.735 ms</td></tr>
+    <tr><td>16×full attention</td><td>4.165</td><td>6.992</td><td>+2.826</td><td>22 queries及parent-sparse访问</td></tr>
+    <tr><td>64×MLP</td><td>21.413</td><td>23.860</td><td>+2.447</td><td>主要是必要的22-row dense计算</td></tr>
+    <tr><td>Tree state commit</td><td>0</td><td>1.434</td><td>+1.434</td><td>约2.15 GB/step，接近HBM下界</td></tr>
+  </tbody></table>
+  <p>Tree只比chain多266个kernels；CUDA launch API约多1.435 ms，但tree的GPU idle gap反而少4.065 ms，所以“launch数量”已不是首要瓶颈。最终P0清除了约1.8–2.1 ms/step同步trace税，P1进一步回收约2.06 ms/step host decision/commit控制，P2 GPU builder smoke再改善约4.1%。这些非计算增量被移除后，最终wall step与chain对齐；GPU kernel仍保留22-row必要算量，不能把最终wall接近解释为每个算子完全等价。</p>
+</section>
+<section id="results"><h2>8. 最终同代码 E2E 对齐结果</h2>
+  <table><caption>GSM8K-32，A100，max_tokens=512，eager；chain独立重复两次。</caption><thead><tr><th>方法</th><th>completion tokens</th><th>verification steps</th><th>mean tau</th><th>ms/step</th><th>tok/s</th></tr></thead><tbody>
+    <tr><td>Ours tree（最终默认）</td><td>12,639</td><td>1,781</td><td><strong>7.120866</strong></td><td><strong>88.508</strong></td><td><strong>80.180</strong></td></tr>
+    <tr><td>Official chain run 1</td><td>12,654</td><td>2,012</td><td>6.349071</td><td>89.085</td><td>70.598</td></tr>
+    <tr><td>Official chain run 2</td><td>12,654</td><td>2,012</td><td>6.349071</td><td>89.657</td><td>70.148</td></tr>
+  </tbody></table>
+  <div class="comparison-key"><div><strong>Tau</strong><span>6.3491 → 7.1209，约 +12.2%</span></div><div><strong>Step latency</strong><span>tree 88.508 vs chain均值89.371 ms；0.97%差异按噪声解释</span></div><div><strong>E2E throughput</strong><span>70.373 → 80.180 tok/s，1.139× / +13.94%</span></div></div>
+  <p>这支持核心结论：当前工作负载上，tree额外的非计算工程开销已压到测量噪声附近，接受长度提升能够转化为实际E2E吞吐。不能据此声称tree的数学计算量小于chain，也不能将13.94%无条件外推到其他数据集、并发、GPU或长上下文。</p>
+</section>
+<section id="correctness"><h2>9. 正确性、回退和被拒绝方案</h2>
+  <ul>
+    <li>GPU builder：随机100树与CPU official builder的token/parent/depth/trunk/mask逐位一致。</li>
+    <li>GPU verify：随机200树、accepted 0…7、两种parent布局和非默认stream与CPU严格一致。</li>
+    <li>Dynamic commit：count 1…8下GDN、conv和attention cache逐位一致。</li>
+    <li>最终tree三轮生成轨迹稳定；chain两轮文本32/32一致。Tree与chain文本24/32一致，差异来自不同block boundary/浮点轨迹，不代表speculative输出错误。</li>
+    <li>Attention caller-owned workspace在多种history长度逐位一致，但service smoke慢2.7%，已revert。</li>
+    <li>通用SDPA arbitrary mask、topological serial recurrent、compact BMM、direct strided root、scalar direct commit、12/16-node预算均无E2E收益或改变数值轨迹，未设为默认。</li>
+    <li>一次P0 formal在服务运行中修改worktree，造成旧/新Python签名混合和HTTP500；已明确判无效，不进入任何汇总。</li>
+    <li>早期GPU builder曾有parent类型编译错误和遗漏trunk child计数；修复后才通过100随机树与service验收。</li>
+  </ul>
+</section>
+<section id="limits"><h2>10. 适用边界与多数据集下一步</h2>
+  <p>当前默认只在SM80自动开启GPU build/verify；其他架构回退CPU。实现限制为单请求、TP1、文本greedy、V2 runner；未覆盖batch&gt;1、continuous batching、PP/PCP、structured output、logprobs、multimodal与CUDA Graph。Final profile与E2E仅来自GSM8K-32，且每方法一次tree与两次chain正式运行，尚不能替代跨数据集统计。</p>
+  <p>下一阶段已准备五个满足128样本的数据集：GSM8K、MATH-500、HumanEval、MBPP和LiveCodeBench。计划在同一2×A100节点同时运行chain/tree，每个数据集各128 prompts，正式比较per-request tau与completion tok/s；AIME25和MT-Bench因总样本不足128不混入主矩阵。新结果发布前，本页只把GSM8K-32作为已完成结论。</p>
+</section>
+<section id="records" class="references"><h2>11. 原始记录</h2><ol>
+  <li><a href="https://github.com/mokomoko05/dLLMSpec/tree/main/agentWorkSpace/20260919_103000_noncompute_p0_p4">P0–P4最终报告、正式结果与重复chain</a></li>
+  <li><a href="https://github.com/mokomoko05/dLLMSpec/tree/main/agentWorkSpace/20260919_071500_best_correlated_profile">matched chain/tree CUDA correlation profile</a></li>
+  <li><a href="https://github.com/mokomoko05/dLLMSpec/tree/main/agentWorkSpace/20260918_111110_gdn_depth_parallel_kernel">完整矩阵维度与E2E数据流</a></li>
+  <li><a href="https://github.com/mokomoko05/dLLMSpec/tree/main/agentWorkSpace/20260918_135138_five_stage_tree_target_optimization">五阶段工程尝试及拒绝项</a></li>
+  <li><a href="https://github.com/mokomoko05/dLLMSpec/tree/main/agentWorkSpace/20260919_083000_gpu_tree_verify">GPU tree verify严格测试与正式结果</a></li>
+  <li><a href="../dflash2-packed-tree/">早期packed-tree历史报告（已由本页更新最终结论）</a></li>
+</ol></section>
+</article></main>
+<footer class="page-footer"><span>DFlash2 Tree：从建树到 E2E 加速 · 2026-09-19</span><a href="../">返回内容目录</a></footer>
 </body></html>

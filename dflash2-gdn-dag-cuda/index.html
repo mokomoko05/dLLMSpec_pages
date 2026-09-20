@@ -14,7 +14,7 @@
   <h1>DFlash2 Tree：从建树到 E2E 加速</h1>
   <p class="subtitle">Qwen3.8-27B · protected-trunk best-first tree · flattened hybrid target · GPU build/verify/commit</p>
   <dl class="article-meta">
-    <div><dt>实验跨度</dt><dd>2026-09-12—19</dd></div>
+    <div><dt>实验跨度</dt><dd>2026-09-12—20</dd></div>
     <div><dt>最终硬件</dt><dd>独占 1× NVIDIA A100 80GB PCIe</dd></div>
     <div><dt>模型</dt><dd>Qwen3.8-27B / 官方 Qwen3.8-27B-DFlash2</dd></div>
     <div><dt>最终状态</dt><dd>GSM8K-32：tree 80.180 tok/s，official chain 两轮均值 70.373 tok/s</dd></div>
@@ -52,7 +52,7 @@
   <h3>2.2 Protected trunk</h3>
   <div class="math-block"><span class="math-line">r<sub>t</sub> = argmax<sub>c</sub> log_softmax(edge_scores[t,r<sub>t−1</sub>,c])，r<sub>−1</sub>=0</span><span class="math-note">连续7步严格复现 official selector walk；这7个节点先写入且永不裁剪。</span></div>
   <h3>2.3 额外分枝</h3>
-  <p>每个候选节点保存 <code>(parent, depth, token, rank, cumulative_log_probability)</code>。Builder 将 root 和 trunk 各前缀的非重复 successor 放入稳定最大堆，按累计 log probability best-first 弹出；只有父节点已物化才允许加入，因此始终 prefix-closed。每个 parent 最多2个不同 token child，总 draft-node 预算21，深度不超过7；同分数用单调 counter 稳定决胜。先占用7个 trunk nodes，剩余最多14个节点分配给高概率分枝。</p>
+  <p>每个候选节点保存 <code>(parent, depth, token, rank, cumulative_log_probability)</code>。Builder 将 root 和 trunk 各前缀的非重复 successor 放入稳定最大堆，按累计 log probability best-first 弹出；只有父节点已物化才允许加入，因此始终 prefix-closed。每个 parent 最多 <code>C</code> 个不同 token child，总 draft-node 预算 <code>N</code>，深度不超过7；同分数用单调 counter 稳定决胜。历史默认是 <code>N=21,C=2</code>，新实验的吞吐候选是 <code>N=35,C=3</code>。先占用7个 trunk nodes，剩余最多14个节点分配给高概率分枝。</p>
   <figure class="flow-figure"><div class="token-tree-wrap"><svg class="token-tree" viewBox="0 0 720 240" role="img" aria-label="Protected trunk and best-first branches">
     <line class="edge accepted" x1="55" y1="120" x2="135" y2="120"/><line class="edge accepted" x1="155" y1="120" x2="235" y2="120"/><line class="edge accepted" x1="255" y1="120" x2="335" y2="120"/><line class="edge accepted" x1="355" y1="120" x2="435" y2="120"/><line class="edge accepted" x1="455" y1="120" x2="535" y2="120"/><line class="edge accepted" x1="555" y1="120" x2="635" y2="120"/>
     <line class="edge branch" x1="145" y1="120" x2="235" y2="55"/><line class="edge branch" x1="245" y1="55" x2="335" y2="55"/><line class="edge branch" x1="345" y1="120" x2="435" y2="185"/><line class="edge branch" x1="445" y1="185" x2="535" y2="185"/>
@@ -60,11 +60,64 @@
     <circle class="node branch" cx="245" cy="55" r="14"/><circle class="node branch" cx="345" cy="55" r="14"/><circle class="node branch" cx="445" cy="185" r="14"/><circle class="node branch" cx="545" cy="185" r="14"/>
     <text x="45" y="120">root</text><text x="145" y="120">t1</text><text x="245" y="120">t2</text><text x="345" y="120">t3</text><text x="445" y="120">t4</text><text x="545" y="120">t5</text><text x="645" y="120">t6/7</text><text x="245" y="55">b1</text><text x="345" y="55">b2</text><text x="445" y="185">b3</text><text x="545" y="185">b4</text>
     <text class="annotation" x="22" y="24">绿色：受保护 official trunk；蓝色：按累计 selector 概率加入的额外分枝</text>
-  </svg></div><figcaption>示意图只展示拓扑；正式树为21个draft nodes，root/anchor另计。</figcaption></figure>
+  </svg></div><figcaption>示意图只展示拓扑；绿色代表受保护的 official trunk，不代表 target 已接受。历史默认预算为21个draft nodes，新候选为35个；root/anchor始终不计入预算。</figcaption></figure>
   <h3>2.4 最终 GPU builder</h3>
-  <p>早期版本把 selector tensor 拷到CPU，用Python对象和heap建树，再把parent/depth/mask上传GPU。最终SM80路径由一个CUDA block对应一个请求、一个thread串行执行同一稳定heap算法；串行是有意选择，因为固定规模仅7×16候选、21个输出，目标是消除同步与对象开销而非扩大并行。Kernel直接输出 token、local parent、depth、candidate rank、trunk、含anchor的full parent/depth、ancestor rows和<code>[21,21]</code> mask。100组随机输入与CPU <code>OfficialDFlash2TreeBuilder</code>逐位一致；非SM80或显式关闭时回退CPU。</p>
+  <p>早期版本把 selector tensor 拷到CPU，用Python对象和heap建树，再把parent/depth/mask上传GPU。最终SM80路径由一个CUDA block对应一个请求、一个thread串行执行同一稳定heap算法；串行是有意选择，因为候选仍为7×16、node预算上限64，目标是消除同步与对象开销而非扩大heap内部并行。Kernel直接输出 token、local parent、depth、candidate rank、trunk、含anchor的full parent/depth、ancestor rows和<code>[21,21]</code> mask。100组随机输入与CPU <code>OfficialDFlash2TreeBuilder</code>逐位一致；非SM80或显式关闭时回退CPU。</p>
+  <h3>2.5 算法 1：保护官方路径的稳定 best-first 构树</h3>
+  <p>下列伪代码与当前 <code>exp/tree-budget-branching-sweep@59d51f76</code> 的构树语义对应。<code>d</code> 为从0开始的slot/depth，<code>p</code>、<code>r</code> 是候选rank；<code>parent=-1</code>表示独立于draft-node预算的anchor。括号中 <code>35/3</code> 是已测得吞吐最优的候选配置，并非已切换的生产默认值。</p>
+  <div class="algorithm" role="group" aria-labelledby="tree-builder-algorithm-title">
+    <div class="algorithm-title" id="tree-builder-algorithm-title"><strong>算法 1</strong><span>Protected-trunk best-first candidate tree</span></div>
+    <div class="algorithm-io"><strong>输入</strong><span><code>candidate_ids X[B,D,K]</code>（int64；当前 <code>B=1,D=7,K=16</code>），<code>edge_scores E[B,D,K,K]</code>（selector边分数），<code>anchor_id a[B]</code>（本轮已确认anchor），node预算 <code>N</code>（旧默认21；候选35；GPU上限64），每父节点最多孩子数 <code>C</code>（旧默认2；候选3），<code>strategy∈{path_probability, average_log_probability, depth_bonus}</code>及参数 <code>α</code>。</span></div>
+    <div class="algorithm-io"><strong>输出</strong><span>prefix-closed树 <code>T</code>（<code>M≤N</code>个draft nodes）、受保护的7-node <code>trunk</code>；GPU metadata <code>token[M]</code>、<code>parent[M]</code>、<code>depth[M]</code>、<code>rank[M]</code>、<code>position[M]</code>、<code>full_parent[M+1]</code>、<code>full_depth[M+1]</code>、<code>ancestors[M+1,D]</code>及节点祖先掩码 <code>mask[M,M]</code>。当前GPU固定预算实现分配 <code>M=N</code> 行。</span></div>
+    <pre class="algorithm-code"><code>01  L[d,p,r] ← log_softmax(FP32(E[d,p,:]))[r]   for d=0…D−1, p,r=0…K−1
+02  T ← ∅; children[−1] ← 0; unique_child ← ∅; trunk ← []
+03  p ← −1; prev_rank ← 0; logp ← 0
+04  for d ← 0 … D−1 do                        ▷ 完整复现 official selector walk
+05      r ← argmax_j L[d,prev_rank,j]           ▷ 相同分数取最小 rank
+06      logp ← logp + L[d,prev_rank,r]
+07      v ← append(T, token=X[d,r], parent=p, depth=d, rank=r,
+08                    logp=logp, protected=true)
+09      children[v] ← 0; trunk.append(v); children[p]++; unique_child.add((p,X[d,r]))
+10      p ← v; prev_rank ← r
+11  H ← empty stable max-heap; serial ← 0
+12  procedure ENQUEUE(p,d):
+13      if d ≥ D: return
+14      prev_rank ← (p=−1 ? 0 : T[p].rank)
+15      base ← (p=−1 ? 0 : T[p].logp)
+16      for r ← 0 … K−1 do
+17          if (p,X[d,r]) ∈ unique_child: continue
+18          q ← base + L[d,prev_rank,r]         ▷ 真实累计 log path probability
+19          key ← PRIORITY(q,d,strategy,α)
+20          H.push((key,−serial,p,d,r,q)); serial++
+21  ENQUEUE(−1,0)
+22  for v in trunk do ENQUEUE(v,T[v].depth+1) ▷ root与trunk按此固定顺序入队
+23  while H ≠ ∅ and |T| &lt; N do
+24      (_,_,p,d,r,q) ← H.pop_max()            ▷ 相同key先取先入队者
+25      if children[p] ≥ C: continue
+26      if (p,X[d,r]) ∈ unique_child: continue  ▷ 入队后可能已被别的rank占用
+27      v ← append(T, token=X[d,r], parent=p, depth=d, rank=r,
+28                    logp=q, protected=false)
+29      children[v] ← 0; children[p]++; unique_child.add((p,X[d,r]))
+30      ENQUEUE(v,d+1)
+31  for v in T do                              ▷ 不重复计算node，仅物化拓扑
+32      full_parent[v+1] ← (T[v].parent=−1 ? 0 : T[v].parent+1)
+33      full_depth[v+1] ← T[v].depth+1; position[v] ← T[v].depth+1
+34      ancestors[v+1] ← [anchor=0, parents(v) in root→leaf order, pad −1]
+35      mask[v,u] ← (u=v or u is an ancestor of v)
+36  return T, trunk, token, parent, depth, rank, position,
+37         full_parent, full_depth, ancestors, mask
+
+PRIORITY(q,d,strategy,α):
+  path_probability          → q
+  average_log_probability   → q/(d+1)
+  depth_bonus               → q+α(d+1)</code></pre>
+    <p class="algorithm-caption">图注：<code>H</code>按priority降序、入队序号升序弹出；<code>unique_child</code>的键为<strong>同一个parent下的token ID</strong>，不是候选rank。实际GPU版本以单CUDA线程/请求维护固定容量heap及数组；CPU reference以Python heap实现。评分仅决定哪些备选节点进入预算，最终接受仍由target prediction验证。</p>
+  </div>
+  <h3>2.6 维度、索引约定与算法边界</h3>
+  <p>当 <code>N=35,C=3</code> 时，前7个draft nodes先占用trunk，至多28个剩余节点由heap扩展；target输入为<strong>anchor + 35 nodes = 36 rows</strong>，而21/2旧默认是22 rows。<code>parent[v]</code>是draft-node局部索引，root的直接子节点为−1；<code>full_parent[v+1]</code>是含anchor的target row索引，root子节点映射到row 0。<code>mask</code>只表达本轮tree nodes间的自身/祖先关系；历史cache由attention kernel另外读取。<code>ancestors</code>含anchor且用−1补齐，供GDN与paged parent-sparse attention复用。</p>
+  <p>逻辑上 <code>M≤N</code>；当前经过验收的GPU定形kernel预分配且按预算输出 <code>M=N</code>，适用于本报告的budget/branching组合，不支持把“队列提前耗尽”静默当作短树。<code>max_branching=1</code>不用于大budget配置：该树最大仅能容纳7-node trunk，应使用official chain。<code>temperature=1</code>、<code>min_path_probability=0</code>是本轮GPU与CPU逐位校验的实验口径；上面的伪代码省略了未在GPU热路径使用的概率阈值。单请求SM80实现中，<code>anchor_id</code>用于标记树根/构造reference，不进入额外节点的selector打分。</p>
 </section>
-<section id="dataflow"><h2>3. 一次 tree speculative step 的完整数据流</h2>
+<section id="dataflow"><h2>3. 一次 tree speculative step 的完整数据流</h2><p class="note">本节沿用先前正式验收的21/2配置，故示意形状为anchor+21=22 rows；新推荐35/3使用anchor+35=36 rows，同一层内算子依照N动态改变行数，构树算法及两种配置的输出元数据见2.5–2.6节。</p>
   <figure class="flow-figure"><div class="flow-stack">
     <div class="flow-node"><strong>Confirmed prefix / hybrid cache</strong><span>16层paged KV；48层conv窗口与FP32 recurrent state</span></div>
     <div class="flow-node"><strong>DFlash2 draft + selector</strong><span>7 slots × top16；edge_scores [1,7,16,16]</span></div>
@@ -139,5 +192,5 @@
   <li><a href="../dflash2-packed-tree/">早期packed-tree历史报告（已由本页更新最终结论）</a></li>
 </ol></section>
 </article></main>
-<footer class="page-footer"><span>DFlash2 Tree：从建树到 E2E 加速 · 2026-09-19</span><a href="../">返回内容目录</a></footer>
+<footer class="page-footer"><span>DFlash2 Tree：从建树到 E2E 加速 · 2026-09-20</span><a href="../">返回内容目录</a></footer>
 </body></html>

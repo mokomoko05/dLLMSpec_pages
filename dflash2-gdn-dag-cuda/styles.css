@@ -133,3 +133,13 @@ tbody th { width: 180px; font-weight: 600; }
   body { font-size: 10pt; }
   a { color: inherit; text-decoration: none; }
 }
+
+/* Paper-style numbered algorithm, keeping dflash-multistep typography/layout. */
+.algorithm { margin: 9pt 0 12pt; border-top: 0.75pt solid var(--ink); border-bottom: 0.75pt solid var(--ink); }
+.algorithm-title { display: flex; gap: 9pt; align-items: baseline; padding: 5pt 6pt; border-bottom: 0.5pt solid var(--line); color: var(--ink); font-size: 9.5pt; }
+.algorithm-io { display: grid; grid-template-columns: 33pt minmax(0, 1fr); gap: 5pt; padding: 4pt 6pt; border-bottom: 0.5pt solid var(--line); font-size: 9pt; }
+.algorithm-io strong { color: var(--ink); white-space: nowrap; }
+.algorithm-code { overflow-x: auto; margin: 0; padding: 8pt 6pt; background: #fbfbfb; font-family: ui-monospace, "Courier New", monospace; font-size: 8pt; line-height: 1.45; tab-size: 4; }
+.algorithm-code code { padding: 0; background: none; font-family: inherit; font-size: inherit; white-space: pre; }
+.algorithm-caption { padding: 6pt; border-top: 0.5pt solid var(--line); color: var(--muted); font-size: 8.5pt; }
+@media print { .algorithm-code { white-space: pre-wrap; overflow-wrap: anywhere; } .algorithm { break-inside: avoid; } }

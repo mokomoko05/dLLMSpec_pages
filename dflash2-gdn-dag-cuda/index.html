@@ -65,61 +65,94 @@
   </svg></div><figcaption>示意图只展示拓扑；绿色代表受保护的 official trunk，不代表 target 已接受。历史默认预算为21个draft nodes，新候选为35个；root/anchor始终不计入预算。</figcaption></figure>
   <h3>2.4 最终 GPU builder</h3>
   <p>早期版本把 selector tensor 拷到CPU，用Python对象和heap建树，再把parent/depth/mask上传GPU。最终SM80路径由一个CUDA block对应一个请求、一个thread串行执行同一稳定heap算法；串行是有意选择，因为候选仍为7×16、node预算上限64，目标是消除同步与对象开销而非扩大heap内部并行。Kernel直接输出 token、local parent、depth、candidate rank、trunk、含anchor的full parent/depth、ancestor rows和<code>[21,21]</code> mask。100组随机输入与CPU <code>OfficialDFlash2TreeBuilder</code>逐位一致；非SM80或显式关闭时回退CPU。</p>
-  <h3>2.5 算法 1：保护官方路径的稳定 best-first 构树</h3>
-  <p>算法 1 给出当前 <code>exp/tree-budget-branching-sweep@59d51f76</code> 的构树过程。深度 (d) 从0开始，(p) 表示父节点，(r) 表示候选rank。配置 (N=35,C=3) 在正式实验中取得最高吞吐。</p>
+  <h3>2.5 符号与真实接口</h3>
+  <p>算法先按<strong>单个请求</strong>描述；当前GPU入口要求 <code>B=1</code>，因此批维在伪代码中消去。Anchor由model runner作为target row 0单独传入，GPU builder实际接收候选token与selector边分数，不接收anchor token ID。CPU reference额外保存anchor ID，用于构造完整的<code>CandidateTree</code>对象。</p>
+  <table class="notation-table"><caption>表 1. 构树算法符号、维度与代码含义</caption><thead><tr><th>符号</th><th>形状 / 类型</th><th>定义</th><th>实现对应</th></tr></thead><tbody>
+    <tr><td>\(D\)</td><td>标量；当前7</td><td>draft slot数，也等于树的最大draft深度。</td><td><code>candidate_ids.shape[1]</code></td></tr>
+    <tr><td>\(K\)</td><td>标量；当前16</td><td>每个slot保留的候选rank数。</td><td><code>selector_top_k</code></td></tr>
+    <tr><td>\(X_{d,r}\)</td><td>\(X\in\mathbb{N}^{D\times K}\)</td><td>深度\(d\)处rank \(r\)对应的token ID。同一个token可出现在不同parent下。</td><td><code>candidate_ids[0,d,r]</code></td></tr>
+    <tr><td>\(E_{d,p,r}\)</td><td>\(E\in\mathbb{R}^{D\times K\times K}\)</td><td>selector给出的条件边分数：前一slot候选rank为\(p\)时，当前slot选择rank \(r\)的分数。深度0使用约定的前驱rank 0。</td><td><code>scores[0,d,p,r]</code></td></tr>
+    <tr><td>\(L_{d,p,r}\)</td><td>FP32，形状同\(E\)</td><td>沿最后一维归一化的条件log probability：\(\log\operatorname{softmax}(E_{d,p,:})_r\)。</td><td><code>log_probabilities</code></td></tr>
+    <tr><td>\(N\)</td><td>7–64</td><td>draft-node预算；anchor不计入。旧默认21，吞吐候选35。</td><td><code>max_nodes</code></td></tr>
+    <tr><td>\(C\)</td><td>2–16</td><td>每个parent最多保留的不同token child数。旧默认2，吞吐候选3。</td><td><code>max_branching</code></td></tr>
+    <tr><td>\(v\)</td><td>整数，\(0\le v&lt;|T|\)</td><td>已物化draft node的局部索引；节点按创建顺序编号，parent始终早于child。</td><td><code>node_index</code></td></tr>
+    <tr><td>\(\pi_v\)</td><td>整数或−1</td><td>节点\(v\)的局部parent索引；−1表示它直接连接虚拟根/anchor。</td><td><code>parent_indices[v]</code></td></tr>
+    <tr><td>\(\delta_v,r_v,\ell_v\)</td><td>整数、整数、FP64累加值</td><td>节点深度、selector rank及从虚拟根到该节点的累计log path probability。</td><td><code>depth</code>、<code>candidate_rank</code>、<code>log_path_probability</code></td></tr>
+    <tr><td>\(T\)</td><td>有序node数组</td><td>正在构造的prefix-closed树；数组顺序同时是target flattened row顺序的基础。</td><td><code>nodes</code> / CUDA输出数组</td></tr>
+    <tr><td>\(\tau\)</td><td>长度\(D\)的node索引序列</td><td>严格复现official selector walk的protected trunk；先创建并始终保留。</td><td><code>trunk_indices</code></td></tr>
+    <tr><td>\(U\)</td><td>集合\(\{(\pi,\mathrm{token})\}\)</td><td>已占用的(parent, token ID)键，用于保证同一parent下token唯一。</td><td><code>unique_child</code></td></tr>
+    <tr><td>\(c_\pi\)</td><td>非负整数</td><td>parent \(\pi\)当前已物化的child数量。</td><td><code>children[parent]</code></td></tr>
+    <tr><td>\(H,z\)</td><td>稳定max-heap、递增整数</td><td>候选frontier与入队序号；priority相同者按更早的\(z\)先弹出。</td><td><code>frontier</code>/<code>heap</code>、<code>counter</code></td></tr>
+    <tr><td>\(s,\alpha\)</td><td>枚举、浮点数</td><td>priority策略与depth-bonus系数；最终推荐继续使用累计path probability。</td><td><code>strategy</code>、<code>strategy_alpha</code></td></tr>
+  </tbody></table>
+  <p>每个node记录六元组 \(T[v]=(x_v,\pi_v,\delta_v,r_v,\ell_v,b_v)\)，其中\(x_v\)是token ID，\(b_v\)表示该节点是否属于protected trunk。候选heap项记录 \((h,-z,\pi,d,r,\ell)\)：\(h\)负责排序，\(\ell\)始终保存真实累计log probability，供child继续扩展。</p>
+
+  <h3>2.6 算法 1：保护官方路径的稳定 best-first 构树</h3>
+  <p>算法 1 对应当前 <code>exp/tree-budget-branching-sweep@59d51f76</code> 的CPU/GPU共同语义。配置 \(N=35,C=3\) 在正式实验中取得最高吞吐；生产默认配置保持为 \(N=21,C=2\)。</p>
   <figure class="algorithm" aria-labelledby="tree-builder-algorithm-title">
     <figcaption class="algorithm-title" id="tree-builder-algorithm-title"><strong>Algorithm 1</strong><span>Protected-Trunk Best-First Candidate Tree</span></figcaption>
-    <div class="algorithm-io"><strong>Input:</strong><span>
-      Candidate tokens \(X\in\mathbb{N}^{B\times D\times K}\), selector edge scores \(E\in\mathbb{R}^{B\times D\times K\times K}\), anchor \(a\in\mathbb{N}^{B}\), node budget \(N\), branching limit \(C\), scoring strategy \(s\), and coefficient \(\alpha\). Current production shapes are \(B=1,D=7,K=16\); the recommended configuration is \(N=35,C=3\).
-    </span></div>
-    <div class="algorithm-io"><strong>Output:</strong><span>
-      Prefix-closed tree \(T\) with \(M\leq N\) draft nodes; protected trunk \(\tau\); and device metadata \(\{\mathbf{x},\boldsymbol{\pi},\mathbf{d},\mathbf{r},\mathbf{q},\boldsymbol{\pi}^{+},\mathbf{d}^{+},\mathbf{A},\mathbf{M}\}\) for token, parent, depth, candidate rank, position, anchor-inclusive parent/depth, ancestors, and ancestor mask. The fixed-budget GPU path uses \(M=N\).
-    </span></div>
+    <div class="algorithm-io"><strong>Input:</strong><span>Candidate tokens \(X\in\mathbb{N}^{D\times K}\), selector edge scores \(E\in\mathbb{R}^{D\times K\times K}\), node budget \(N\), branching limit \(C\), scoring strategy \(s\), and coefficient \(\alpha\).</span></div>
+    <div class="algorithm-io"><strong>Output:</strong><span>Ordered prefix tree \(T\), protected trunk \(\tau\), and flattened device metadata \(\mathbf{x},\boldsymbol{\pi},\boldsymbol{\delta},\mathbf{r},\mathbf{q},\boldsymbol{\pi}^{+},\boldsymbol{\delta}^{+},\mathbf{A},\mathbf{M}\).</span></div>
     <div class="algorithmic-wrap">
-      <table class="algorithmic" aria-label="Protected-trunk best-first tree pseudocode">
-        <tbody>
-        <tr class="alg-row"><td class="alg-no">1:</td><td class="alg-stmt">\(L_{d,p,r}\gets\operatorname{logsoftmax}(\operatorname{FP32}(E_{d,p,:}))_r\), for \(d=0,\ldots,D-1\) and \(p,r=0,\ldots,K-1\)</td></tr>
-        <tr class="alg-row"><td class="alg-no">2:</td><td class="alg-stmt">\(T\gets\varnothing;\; \operatorname{children}[-1]\gets0;\; U\gets\varnothing;\; \tau\gets[\,]\)</td></tr>
-        <tr class="alg-row"><td class="alg-no">3:</td><td class="alg-stmt">\(p\gets-1;\; r_{\mathrm{prev}}\gets0;\; \ell\gets0\)</td></tr>
-        <tr class="alg-row"><td class="alg-no">4:</td><td class="alg-stmt"><span class="alg-keyword">for</span> \(d\gets0\) <span class="alg-keyword">to</span> \(D-1\) <span class="alg-keyword">do</span> <span class="alg-comment">▷ Reproduce the official selector walk</span></td></tr>
-        <tr class="alg-row indent-1"><td class="alg-no">5:</td><td class="alg-stmt">\(r\gets\arg\max_j L_{d,r_{\mathrm{prev}},j}\) <span class="alg-comment">▷ Stable tie-break: smallest rank</span></td></tr>
+      <table class="algorithmic" aria-label="Protected-trunk best-first tree pseudocode"><tbody>
+        <tr class="alg-row"><td class="alg-no">1:</td><td class="alg-stmt">\(L_{d,p,r}\gets\operatorname{logsoftmax}(\operatorname{FP32}(E_{d,p,:}))_r\)</td></tr>
+        <tr class="alg-row"><td class="alg-no">2:</td><td class="alg-stmt">\(T\gets[\,];\ U\gets\varnothing;\ \tau\gets[\,];\ c_{-1}\gets0\)</td></tr>
+        <tr class="alg-row"><td class="alg-no">3:</td><td class="alg-stmt">\(\pi\gets-1;\ r_{\mathrm{prev}}\gets0;\ \ell\gets0\)</td></tr>
+        <tr class="alg-row"><td class="alg-no">4:</td><td class="alg-stmt"><span class="alg-keyword">for</span> \(d=0,\ldots,D-1\) <span class="alg-keyword">do</span> <span class="alg-comment">▷ protected official trunk</span></td></tr>
+        <tr class="alg-row indent-1"><td class="alg-no">5:</td><td class="alg-stmt">\(r\gets\arg\max_j L_{d,r_{\mathrm{prev}},j}\)</td></tr>
         <tr class="alg-row indent-1"><td class="alg-no">6:</td><td class="alg-stmt">\(\ell\gets\ell+L_{d,r_{\mathrm{prev}},r}\)</td></tr>
-        <tr class="alg-row indent-1"><td class="alg-no">7:</td><td class="alg-stmt">\(v\gets\operatorname{Append}(T,X_{d,r},p,d,r,\ell,\mathrm{protected}=\mathrm{true})\)</td></tr>
-        <tr class="alg-row indent-1"><td class="alg-no">8:</td><td class="alg-stmt">\(\operatorname{children}[v]\gets0;\; \tau.\operatorname{append}(v);\; \operatorname{children}[p]{+}{+};\; U\gets U\cup\{(p,X_{d,r})\}\)</td></tr>
-        <tr class="alg-row indent-1"><td class="alg-no">9:</td><td class="alg-stmt">\(p\gets v;\; r_{\mathrm{prev}}\gets r\)</td></tr>
+        <tr class="alg-row indent-1"><td class="alg-no">7:</td><td class="alg-stmt">\(v\gets\operatorname{Append}(T,(X_{d,r},\pi,d,r,\ell,\mathrm{true}))\)</td></tr>
+        <tr class="alg-row indent-1"><td class="alg-no">8:</td><td class="alg-stmt">\(c_v\gets0;\ c_\pi\gets c_\pi+1;\ U\gets U\cup\{(\pi,X_{d,r})\};\ \tau.\operatorname{append}(v)\)</td></tr>
+        <tr class="alg-row indent-1"><td class="alg-no">9:</td><td class="alg-stmt">\(\pi\gets v;\ r_{\mathrm{prev}}\gets r\)</td></tr>
         <tr class="alg-row"><td class="alg-no">10:</td><td class="alg-stmt"><span class="alg-keyword">end for</span></td></tr>
-        <tr class="alg-row"><td class="alg-no">11:</td><td class="alg-stmt">\(H\gets\) empty stable max-heap; \(z\gets0\) <span class="alg-comment">▷ \(z\): insertion serial</span></td></tr>
-        <tr class="alg-row"><td class="alg-no">12:</td><td class="alg-stmt"><span class="alg-keyword">procedure</span> \(\operatorname{Enqueue}(p,d)\)</td></tr>
-        <tr class="alg-row indent-1"><td class="alg-no">13:</td><td class="alg-stmt"><span class="alg-keyword">if</span> \(d\geq D\) <span class="alg-keyword">then return</span></td></tr>
-        <tr class="alg-row indent-1"><td class="alg-no">14:</td><td class="alg-stmt">\(r_{\mathrm{prev}}\gets\mathbf{1}[p\neq-1]T[p].\mathrm{rank};\quad b\gets\mathbf{1}[p\neq-1]T[p].\mathrm{logp}\)</td></tr>
-        <tr class="alg-row indent-1"><td class="alg-no">15:</td><td class="alg-stmt"><span class="alg-keyword">for</span> \(r\gets0\) <span class="alg-keyword">to</span> \(K-1\) <span class="alg-keyword">do</span></td></tr>
-        <tr class="alg-row indent-2"><td class="alg-no">16:</td><td class="alg-stmt"><span class="alg-keyword">if</span> \((p,X_{d,r})\in U\) <span class="alg-keyword">then continue</span></td></tr>
-        <tr class="alg-row indent-2"><td class="alg-no">17:</td><td class="alg-stmt">\(\ell'\gets b+L_{d,r_{\mathrm{prev}},r};\quad h\gets\operatorname{Priority}(\ell',d,s,\alpha)\)</td></tr>
-        <tr class="alg-row indent-2"><td class="alg-no">18:</td><td class="alg-stmt">\(H.\operatorname{push}(h,-z,p,d,r,\ell');\quad z\gets z+1\)</td></tr>
+        <tr class="alg-row"><td class="alg-no">11:</td><td class="alg-stmt">\(H\gets\varnothing;\ z\gets0\) <span class="alg-comment">▷ stable max-heap and insertion serial</span></td></tr>
+        <tr class="alg-row"><td class="alg-no">12:</td><td class="alg-stmt"><span class="alg-keyword">procedure</span> \(\operatorname{Enqueue}(\pi,d)\)</td></tr>
+        <tr class="alg-row indent-1"><td class="alg-no">13:</td><td class="alg-stmt"><span class="alg-keyword">if</span> \(d\ge D\) <span class="alg-keyword">then return</span></td></tr>
+        <tr class="alg-row indent-1"><td class="alg-no">14:</td><td class="alg-stmt">\((r_0,b)\gets(0,0)\) if \(\pi=-1\), otherwise \((r_\pi,\ell_\pi)\)</td></tr>
+        <tr class="alg-row indent-1"><td class="alg-no">15:</td><td class="alg-stmt"><span class="alg-keyword">for</span> \(r=0,\ldots,K-1\) <span class="alg-keyword">do</span></td></tr>
+        <tr class="alg-row indent-2"><td class="alg-no">16:</td><td class="alg-stmt"><span class="alg-keyword">if</span> \((\pi,X_{d,r})\in U\) <span class="alg-keyword">then continue</span></td></tr>
+        <tr class="alg-row indent-2"><td class="alg-no">17:</td><td class="alg-stmt">\(\ell'\gets b+L_{d,r_0,r};\ h\gets\operatorname{Priority}(\ell',d,s,\alpha)\)</td></tr>
+        <tr class="alg-row indent-2"><td class="alg-no">18:</td><td class="alg-stmt">\(H.\operatorname{push}(h,-z,\pi,d,r,\ell');\ z\gets z+1\)</td></tr>
         <tr class="alg-row indent-1"><td class="alg-no">19:</td><td class="alg-stmt"><span class="alg-keyword">end for</span></td></tr>
         <tr class="alg-row"><td class="alg-no">20:</td><td class="alg-stmt"><span class="alg-keyword">end procedure</span></td></tr>
-        <tr class="alg-row"><td class="alg-no">21:</td><td class="alg-stmt">\(\operatorname{Enqueue}(-1,0)\); <span class="alg-keyword">for each</span> \(v\in\tau\), call \(\operatorname{Enqueue}(v,T[v].\mathrm{depth}+1)\)</td></tr>
-        <tr class="alg-row"><td class="alg-no">22:</td><td class="alg-stmt"><span class="alg-keyword">while</span> \(H\neq\varnothing\land |T|&lt;N\) <span class="alg-keyword">do</span></td></tr>
-        <tr class="alg-row indent-1"><td class="alg-no">23:</td><td class="alg-stmt">\((\_,\_,p,d,r,\ell')\gets H.\operatorname{popmax}()\) <span class="alg-comment">▷ Higher priority, then earlier serial</span></td></tr>
-        <tr class="alg-row indent-1"><td class="alg-no">24:</td><td class="alg-stmt"><span class="alg-keyword">if</span> \(\operatorname{children}[p]\geq C\lor(p,X_{d,r})\in U\) <span class="alg-keyword">then continue</span></td></tr>
-        <tr class="alg-row indent-1"><td class="alg-no">25:</td><td class="alg-stmt">\(v\gets\operatorname{Append}(T,X_{d,r},p,d,r,\ell',\mathrm{protected}=\mathrm{false})\)</td></tr>
-        <tr class="alg-row indent-1"><td class="alg-no">26:</td><td class="alg-stmt">\(\operatorname{children}[v]\gets0;\; \operatorname{children}[p]{+}{+};\; U\gets U\cup\{(p,X_{d,r})\}\)</td></tr>
+        <tr class="alg-row"><td class="alg-no">21:</td><td class="alg-stmt">\(\operatorname{Enqueue}(-1,0)\); then \(\operatorname{Enqueue}(v,\delta_v+1)\) for each \(v\in\tau\)</td></tr>
+        <tr class="alg-row"><td class="alg-no">22:</td><td class="alg-stmt"><span class="alg-keyword">while</span> \(H\ne\varnothing\land|T|&lt;N\) <span class="alg-keyword">do</span></td></tr>
+        <tr class="alg-row indent-1"><td class="alg-no">23:</td><td class="alg-stmt">\((\_,\_,\pi,d,r,\ell')\gets H.\operatorname{popmax}()\)</td></tr>
+        <tr class="alg-row indent-1"><td class="alg-no">24:</td><td class="alg-stmt"><span class="alg-keyword">if</span> \(c_\pi\ge C\lor(\pi,X_{d,r})\in U\) <span class="alg-keyword">then continue</span></td></tr>
+        <tr class="alg-row indent-1"><td class="alg-no">25:</td><td class="alg-stmt">\(v\gets\operatorname{Append}(T,(X_{d,r},\pi,d,r,\ell',\mathrm{false}))\)</td></tr>
+        <tr class="alg-row indent-1"><td class="alg-no">26:</td><td class="alg-stmt">\(c_v\gets0;\ c_\pi\gets c_\pi+1;\ U\gets U\cup\{(\pi,X_{d,r})\}\)</td></tr>
         <tr class="alg-row indent-1"><td class="alg-no">27:</td><td class="alg-stmt">\(\operatorname{Enqueue}(v,d+1)\)</td></tr>
         <tr class="alg-row"><td class="alg-no">28:</td><td class="alg-stmt"><span class="alg-keyword">end while</span></td></tr>
-        <tr class="alg-row"><td class="alg-no">29:</td><td class="alg-stmt"><span class="alg-keyword">for each</span> \(v\in T\) <span class="alg-keyword">do</span> materialize \(\boldsymbol{\pi}^{+},\mathbf{d}^{+},\mathbf{q},\mathbf{A},\mathbf{M}\) from the parent chain</td></tr>
-        <tr class="alg-row"><td class="alg-no">30:</td><td class="alg-stmt"><span class="alg-keyword">return</span> \(T,\tau,\mathbf{x},\boldsymbol{\pi},\mathbf{d},\mathbf{r},\mathbf{q},\boldsymbol{\pi}^{+},\mathbf{d}^{+},\mathbf{A},\mathbf{M}\)</td></tr>
+        <tr class="alg-row"><td class="alg-no">29:</td><td class="alg-stmt">\(\mathcal{D}\gets\operatorname{MaterializeMetadata}(T)\) <span class="alg-comment">▷ definitions in Table 2</span></td></tr>
+        <tr class="alg-row"><td class="alg-no">30:</td><td class="alg-stmt"><span class="alg-keyword">return</span> \((T,\tau,\mathcal{D})\)</td></tr>
         <tr class="alg-row alg-spacer"><td colspan="2"></td></tr>
         <tr class="alg-row"><td class="alg-no">31:</td><td class="alg-stmt"><span class="alg-keyword">function</span> \(\operatorname{Priority}(\ell,d,s,\alpha)\)</td></tr>
         <tr class="alg-row indent-1"><td class="alg-no">32:</td><td class="alg-stmt"><span class="alg-keyword">if</span> \(s=\mathrm{PathProbability}\) <span class="alg-keyword">then return</span> \(\ell\)</td></tr>
         <tr class="alg-row indent-1"><td class="alg-no">33:</td><td class="alg-stmt"><span class="alg-keyword">if</span> \(s=\mathrm{AverageLogProbability}\) <span class="alg-keyword">then return</span> \(\ell/(d+1)\)</td></tr>
         <tr class="alg-row indent-1"><td class="alg-no">34:</td><td class="alg-stmt"><span class="alg-keyword">if</span> \(s=\mathrm{DepthBonus}\) <span class="alg-keyword">then return</span> \(\ell+\alpha(d+1)\)</td></tr>
         <tr class="alg-row"><td class="alg-no">35:</td><td class="alg-stmt"><span class="alg-keyword">end function</span></td></tr>
-        </tbody>
-      </table>
+      </tbody></table>
     </div>
-    <p class="algorithm-caption"><strong>Semantics.</strong> The heap orders candidates by descending priority and ascending insertion serial. Set \(U\) uses the key \((\mathrm{parent},\mathrm{token\ ID})\) to enforce sibling-token uniqueness. Materialization records topology; the target evaluates each unique node once. Selector priority allocates the node budget, while target predictions determine acceptance.</p>
+    <p class="algorithm-caption"><strong>Ordering.</strong> Heap \(H\) sorts by descending priority and ascending insertion serial \(z\). Set \(U\) uses the key (parent index, token ID), which guarantees sibling-token uniqueness. Priority allocates the node budget; target predictions determine acceptance.</p>
   </figure>
-  <h3>2.6 维度、索引约定与算法边界</h3>
+
+  <h3>2.7 输出metadata如何由树生成</h3>
+  <table><caption>表 2. \(\mathcal{D}=\operatorname{MaterializeMetadata}(T)\) 的精确定义</caption><thead><tr><th>输出</th><th>形状</th><th>定义与消费者</th></tr></thead><tbody>
+    <tr><td>\(\mathbf{x}[v]\)</td><td>\([M]\)</td><td>\(x_v\)，flattened target的draft token；target row为\(v+1\)。</td></tr>
+    <tr><td>\(\boldsymbol{\pi}[v]\)</td><td>\([M]\)</td><td>\(\pi_v\)，draft-node局部parent；root child为−1。</td></tr>
+    <tr><td>\(\boldsymbol{\delta}[v]\)</td><td>\([M]\)</td><td>\(\delta_v\)，0-based draft depth。</td></tr>
+    <tr><td>\(\mathbf{r}[v]\)</td><td>\([M]\)</td><td>\(r_v\)，该node来自selector top-K中的rank。</td></tr>
+    <tr><td>\(\mathbf{q}[v]\)</td><td>\([M]\)</td><td>\(\delta_v+1\)，相对anchor的position offset。</td></tr>
+    <tr><td>\(\boldsymbol{\pi}^{+}[0]\)</td><td rowspan="2">\([M+1]\)</td><td>−1；row 0代表anchor。</td></tr>
+    <tr><td>\(\boldsymbol{\pi}^{+}[v+1]\)</td><td>若\(\pi_v=-1\)则为0，否则为\(\pi_v+1\)。GDN与GPU verify据此读取含anchor的parent row。</td></tr>
+    <tr><td>\(\boldsymbol{\delta}^{+}[0]\)</td><td rowspan="2">\([M+1]\)</td><td>0；anchor depth。</td></tr>
+    <tr><td>\(\boldsymbol{\delta}^{+}[v+1]\)</td><td>\(\delta_v+1\)。</td></tr>
+    <tr><td>\(\mathbf{A}[v+1,:]\)</td><td>\([M+1,D]\)</td><td>\([0,\operatorname{ancestors}(v)\text{ in root-to-leaf order},-1\text{ padding}]\)；供GDN与parent-sparse attention复用。</td></tr>
+    <tr><td>\(\mathbf{M}[v,u]\)</td><td>\([M,M]\), bool</td><td>当且仅当\(u=v\)或\(u\)是\(v\)的draft ancestor时为true；历史KV由paged cache单独提供。</td></tr>
+  </tbody></table>
+  <p>在35/3配置中，trunk占7个节点，heap分配其余28个节点，target一次处理anchor加35个tree rows，共36 rows。节点创建顺序满足\(\pi_v&lt;v\)，因此parent state在child执行前已经可用。当前验收配置的frontier足以填满预算，故GPU固定形状路径取\(M=N\)。</p>
+
+  <h3>2.8 维度、索引约定与算法边界</h3>
   <p>当 <code>N=35,C=3</code> 时，前7个draft nodes先占用trunk，至多28个剩余节点由heap扩展；target输入为<strong>anchor + 35 nodes = 36 rows</strong>，而21/2旧默认是22 rows。<code>parent[v]</code>是draft-node局部索引，root的直接子节点为−1；<code>full_parent[v+1]</code>是含anchor的target row索引，root子节点映射到row 0。<code>mask</code>只表达本轮tree nodes间的自身/祖先关系；历史cache由attention kernel另外读取。<code>ancestors</code>含anchor且用−1补齐，供GDN与paged parent-sparse attention复用。</p>
   <p>逻辑上 <code>M≤N</code>；当前经过验收的GPU定形kernel预分配且按预算输出 <code>M=N</code>，适用于本报告的budget/branching组合，不支持把“队列提前耗尽”静默当作短树。<code>max_branching=1</code>不用于大budget配置：该树最大仅能容纳7-node trunk，应使用official chain。<code>temperature=1</code>、<code>min_path_probability=0</code>是本轮GPU与CPU逐位校验的实验口径；上面的伪代码省略了未在GPU热路径使用的概率阈值。单请求SM80实现中，<code>anchor_id</code>用于标记树根/构造reference，不进入额外节点的selector打分。</p>
 </section>

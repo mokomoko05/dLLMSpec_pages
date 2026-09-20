@@ -75,39 +75,48 @@
     <div class="algorithm-io"><strong>Output:</strong><span>
       Prefix-closed tree \(T\) with \(M\leq N\) draft nodes; protected trunk \(\tau\); and device metadata \(\{\mathbf{x},\boldsymbol{\pi},\mathbf{d},\mathbf{r},\mathbf{q},\boldsymbol{\pi}^{+},\mathbf{d}^{+},\mathbf{A},\mathbf{M}\}\) for token, parent, depth, candidate rank, position, anchor-inclusive parent/depth, ancestors, and ancestor mask. The fixed-budget GPU path uses \(M=N\).
     </span></div>
-    <div class="algorithmic" role="list" aria-label="Protected-trunk best-first tree pseudocode">
-      <div class="alg-line"><span class="alg-no">1</span><span class="alg-stmt">\(L_{d,p,r}\gets\operatorname{logsoftmax}(\operatorname{FP32}(E_{d,p,:}))_r\), for \(d=0,\ldots,D-1\) and \(p,r=0,\ldots,K-1\)</span></div>
-      <div class="alg-line"><span class="alg-no">2</span><span class="alg-stmt">\(T\gets\varnothing;\; \operatorname{children}[-1]\gets0;\; U\gets\varnothing;\; \tau\gets[\,]\)</span></div>
-      <div class="alg-line"><span class="alg-no">3</span><span class="alg-stmt">\(p\gets-1;\; r_{\mathrm{prev}}\gets0;\; \ell\gets0\)</span></div>
-      <div class="alg-line"><span class="alg-no">4</span><span class="alg-stmt"><span class="alg-keyword">for</span> \(d\gets0\) <span class="alg-keyword">to</span> \(D-1\) <span class="alg-keyword">do</span> <span class="alg-comment">▷ Reproduce the official selector walk</span></span></div>
-      <div class="alg-line indent-1"><span class="alg-no">5</span><span class="alg-stmt">\(r\gets\arg\max_j L_{d,r_{\mathrm{prev}},j}\) <span class="alg-comment">▷ Stable tie-break: smallest rank</span></span></div>
-      <div class="alg-line indent-1"><span class="alg-no">6</span><span class="alg-stmt">\(\ell\gets\ell+L_{d,r_{\mathrm{prev}},r}\)</span></div>
-      <div class="alg-line indent-1"><span class="alg-no">7</span><span class="alg-stmt">\(v\gets\operatorname{Append}(T,X_{d,r},p,d,r,\ell,\mathrm{protected}=\mathrm{true})\)</span></div>
-      <div class="alg-line indent-1"><span class="alg-no">8</span><span class="alg-stmt">\(\operatorname{children}[v]\gets0;\; \tau.\operatorname{append}(v);\; \operatorname{children}[p]{+}{+};\; U\gets U\cup\{(p,X_{d,r})\}\)</span></div>
-      <div class="alg-line indent-1"><span class="alg-no">9</span><span class="alg-stmt">\(p\gets v;\; r_{\mathrm{prev}}\gets r\)</span></div>
-      <div class="alg-line"><span class="alg-no">10</span><span class="alg-stmt"><span class="alg-keyword">end for</span></span></div>
-      <div class="alg-line"><span class="alg-no">11</span><span class="alg-stmt">\(H\gets\) empty stable max-heap; \(z\gets0\) <span class="alg-comment">▷ \(z\): insertion serial</span></span></div>
-      <div class="alg-line"><span class="alg-no">12</span><span class="alg-stmt"><span class="alg-keyword">procedure</span> \(\operatorname{Enqueue}(p,d)\)</span></div>
-      <div class="alg-line indent-1"><span class="alg-no">13</span><span class="alg-stmt"><span class="alg-keyword">if</span> \(d\geq D\) <span class="alg-keyword">then return</span></span></div>
-      <div class="alg-line indent-1"><span class="alg-no">14</span><span class="alg-stmt">\(r_{\mathrm{prev}}\gets\mathbf{1}[p\neq-1]T[p].\mathrm{rank};\quad b\gets\mathbf{1}[p\neq-1]T[p].\mathrm{logp}\)</span></div>
-      <div class="alg-line indent-1"><span class="alg-no">15</span><span class="alg-stmt"><span class="alg-keyword">for</span> \(r\gets0\) <span class="alg-keyword">to</span> \(K-1\) <span class="alg-keyword">do</span></span></div>
-      <div class="alg-line indent-2"><span class="alg-no">16</span><span class="alg-stmt"><span class="alg-keyword">if</span> \((p,X_{d,r})\in U\) <span class="alg-keyword">then continue</span></span></div>
-      <div class="alg-line indent-2"><span class="alg-no">17</span><span class="alg-stmt">\(\ell'\gets b+L_{d,r_{\mathrm{prev}},r};\quad h\gets\operatorname{Priority}(\ell',d,s,\alpha)\)</span></div>
-      <div class="alg-line indent-2"><span class="alg-no">18</span><span class="alg-stmt">\(H.\operatorname{push}(h,-z,p,d,r,\ell');\quad z\gets z+1\)</span></div>
-      <div class="alg-line indent-1"><span class="alg-no">19</span><span class="alg-stmt"><span class="alg-keyword">end for</span></span></div>
-      <div class="alg-line"><span class="alg-no">20</span><span class="alg-stmt"><span class="alg-keyword">end procedure</span></span></div>
-      <div class="alg-line"><span class="alg-no">21</span><span class="alg-stmt">\(\operatorname{Enqueue}(-1,0)\); <span class="alg-keyword">for each</span> \(v\in\tau\), call \(\operatorname{Enqueue}(v,T[v].\mathrm{depth}+1)\)</span></div>
-      <div class="alg-line"><span class="alg-no">22</span><span class="alg-stmt"><span class="alg-keyword">while</span> \(H\neq\varnothing\land |T|&lt;N\) <span class="alg-keyword">do</span></span></div>
-      <div class="alg-line indent-1"><span class="alg-no">23</span><span class="alg-stmt">\((\_,\_,p,d,r,\ell')\gets H.\operatorname{popmax}()\) <span class="alg-comment">▷ Higher priority, then earlier serial</span></span></div>
-      <div class="alg-line indent-1"><span class="alg-no">24</span><span class="alg-stmt"><span class="alg-keyword">if</span> \(\operatorname{children}[p]\geq C\lor(p,X_{d,r})\in U\) <span class="alg-keyword">then continue</span></span></div>
-      <div class="alg-line indent-1"><span class="alg-no">25</span><span class="alg-stmt">\(v\gets\operatorname{Append}(T,X_{d,r},p,d,r,\ell',\mathrm{protected}=\mathrm{false})\)</span></div>
-      <div class="alg-line indent-1"><span class="alg-no">26</span><span class="alg-stmt">\(\operatorname{children}[v]\gets0;\; \operatorname{children}[p]{+}{+};\; U\gets U\cup\{(p,X_{d,r})\}\)</span></div>
-      <div class="alg-line indent-1"><span class="alg-no">27</span><span class="alg-stmt">\(\operatorname{Enqueue}(v,d+1)\)</span></div>
-      <div class="alg-line"><span class="alg-no">28</span><span class="alg-stmt"><span class="alg-keyword">end while</span></span></div>
-      <div class="alg-line"><span class="alg-no">29</span><span class="alg-stmt"><span class="alg-keyword">for each</span> \(v\in T\) <span class="alg-keyword">do</span> materialize \(\boldsymbol{\pi}^{+},\mathbf{d}^{+},\mathbf{q},\mathbf{A},\mathbf{M}\) from the parent chain</span></div>
-      <div class="alg-line"><span class="alg-no">30</span><span class="alg-stmt"><span class="alg-keyword">return</span> \(T,\tau,\mathbf{x},\boldsymbol{\pi},\mathbf{d},\mathbf{r},\mathbf{q},\boldsymbol{\pi}^{+},\mathbf{d}^{+},\mathbf{A},\mathbf{M}\)</span></div>
+    <div class="algorithmic-wrap">
+      <table class="algorithmic" aria-label="Protected-trunk best-first tree pseudocode">
+        <tbody>
+        <tr class="alg-row"><td class="alg-no">1:</td><td class="alg-stmt">\(L_{d,p,r}\gets\operatorname{logsoftmax}(\operatorname{FP32}(E_{d,p,:}))_r\), for \(d=0,\ldots,D-1\) and \(p,r=0,\ldots,K-1\)</td></tr>
+        <tr class="alg-row"><td class="alg-no">2:</td><td class="alg-stmt">\(T\gets\varnothing;\; \operatorname{children}[-1]\gets0;\; U\gets\varnothing;\; \tau\gets[\,]\)</td></tr>
+        <tr class="alg-row"><td class="alg-no">3:</td><td class="alg-stmt">\(p\gets-1;\; r_{\mathrm{prev}}\gets0;\; \ell\gets0\)</td></tr>
+        <tr class="alg-row"><td class="alg-no">4:</td><td class="alg-stmt"><span class="alg-keyword">for</span> \(d\gets0\) <span class="alg-keyword">to</span> \(D-1\) <span class="alg-keyword">do</span> <span class="alg-comment">▷ Reproduce the official selector walk</span></td></tr>
+        <tr class="alg-row indent-1"><td class="alg-no">5:</td><td class="alg-stmt">\(r\gets\arg\max_j L_{d,r_{\mathrm{prev}},j}\) <span class="alg-comment">▷ Stable tie-break: smallest rank</span></td></tr>
+        <tr class="alg-row indent-1"><td class="alg-no">6:</td><td class="alg-stmt">\(\ell\gets\ell+L_{d,r_{\mathrm{prev}},r}\)</td></tr>
+        <tr class="alg-row indent-1"><td class="alg-no">7:</td><td class="alg-stmt">\(v\gets\operatorname{Append}(T,X_{d,r},p,d,r,\ell,\mathrm{protected}=\mathrm{true})\)</td></tr>
+        <tr class="alg-row indent-1"><td class="alg-no">8:</td><td class="alg-stmt">\(\operatorname{children}[v]\gets0;\; \tau.\operatorname{append}(v);\; \operatorname{children}[p]{+}{+};\; U\gets U\cup\{(p,X_{d,r})\}\)</td></tr>
+        <tr class="alg-row indent-1"><td class="alg-no">9:</td><td class="alg-stmt">\(p\gets v;\; r_{\mathrm{prev}}\gets r\)</td></tr>
+        <tr class="alg-row"><td class="alg-no">10:</td><td class="alg-stmt"><span class="alg-keyword">end for</span></td></tr>
+        <tr class="alg-row"><td class="alg-no">11:</td><td class="alg-stmt">\(H\gets\) empty stable max-heap; \(z\gets0\) <span class="alg-comment">▷ \(z\): insertion serial</span></td></tr>
+        <tr class="alg-row"><td class="alg-no">12:</td><td class="alg-stmt"><span class="alg-keyword">procedure</span> \(\operatorname{Enqueue}(p,d)\)</td></tr>
+        <tr class="alg-row indent-1"><td class="alg-no">13:</td><td class="alg-stmt"><span class="alg-keyword">if</span> \(d\geq D\) <span class="alg-keyword">then return</span></td></tr>
+        <tr class="alg-row indent-1"><td class="alg-no">14:</td><td class="alg-stmt">\(r_{\mathrm{prev}}\gets\mathbf{1}[p\neq-1]T[p].\mathrm{rank};\quad b\gets\mathbf{1}[p\neq-1]T[p].\mathrm{logp}\)</td></tr>
+        <tr class="alg-row indent-1"><td class="alg-no">15:</td><td class="alg-stmt"><span class="alg-keyword">for</span> \(r\gets0\) <span class="alg-keyword">to</span> \(K-1\) <span class="alg-keyword">do</span></td></tr>
+        <tr class="alg-row indent-2"><td class="alg-no">16:</td><td class="alg-stmt"><span class="alg-keyword">if</span> \((p,X_{d,r})\in U\) <span class="alg-keyword">then continue</span></td></tr>
+        <tr class="alg-row indent-2"><td class="alg-no">17:</td><td class="alg-stmt">\(\ell'\gets b+L_{d,r_{\mathrm{prev}},r};\quad h\gets\operatorname{Priority}(\ell',d,s,\alpha)\)</td></tr>
+        <tr class="alg-row indent-2"><td class="alg-no">18:</td><td class="alg-stmt">\(H.\operatorname{push}(h,-z,p,d,r,\ell');\quad z\gets z+1\)</td></tr>
+        <tr class="alg-row indent-1"><td class="alg-no">19:</td><td class="alg-stmt"><span class="alg-keyword">end for</span></td></tr>
+        <tr class="alg-row"><td class="alg-no">20:</td><td class="alg-stmt"><span class="alg-keyword">end procedure</span></td></tr>
+        <tr class="alg-row"><td class="alg-no">21:</td><td class="alg-stmt">\(\operatorname{Enqueue}(-1,0)\); <span class="alg-keyword">for each</span> \(v\in\tau\), call \(\operatorname{Enqueue}(v,T[v].\mathrm{depth}+1)\)</td></tr>
+        <tr class="alg-row"><td class="alg-no">22:</td><td class="alg-stmt"><span class="alg-keyword">while</span> \(H\neq\varnothing\land |T|&lt;N\) <span class="alg-keyword">do</span></td></tr>
+        <tr class="alg-row indent-1"><td class="alg-no">23:</td><td class="alg-stmt">\((\_,\_,p,d,r,\ell')\gets H.\operatorname{popmax}()\) <span class="alg-comment">▷ Higher priority, then earlier serial</span></td></tr>
+        <tr class="alg-row indent-1"><td class="alg-no">24:</td><td class="alg-stmt"><span class="alg-keyword">if</span> \(\operatorname{children}[p]\geq C\lor(p,X_{d,r})\in U\) <span class="alg-keyword">then continue</span></td></tr>
+        <tr class="alg-row indent-1"><td class="alg-no">25:</td><td class="alg-stmt">\(v\gets\operatorname{Append}(T,X_{d,r},p,d,r,\ell',\mathrm{protected}=\mathrm{false})\)</td></tr>
+        <tr class="alg-row indent-1"><td class="alg-no">26:</td><td class="alg-stmt">\(\operatorname{children}[v]\gets0;\; \operatorname{children}[p]{+}{+};\; U\gets U\cup\{(p,X_{d,r})\}\)</td></tr>
+        <tr class="alg-row indent-1"><td class="alg-no">27:</td><td class="alg-stmt">\(\operatorname{Enqueue}(v,d+1)\)</td></tr>
+        <tr class="alg-row"><td class="alg-no">28:</td><td class="alg-stmt"><span class="alg-keyword">end while</span></td></tr>
+        <tr class="alg-row"><td class="alg-no">29:</td><td class="alg-stmt"><span class="alg-keyword">for each</span> \(v\in T\) <span class="alg-keyword">do</span> materialize \(\boldsymbol{\pi}^{+},\mathbf{d}^{+},\mathbf{q},\mathbf{A},\mathbf{M}\) from the parent chain</td></tr>
+        <tr class="alg-row"><td class="alg-no">30:</td><td class="alg-stmt"><span class="alg-keyword">return</span> \(T,\tau,\mathbf{x},\boldsymbol{\pi},\mathbf{d},\mathbf{r},\mathbf{q},\boldsymbol{\pi}^{+},\mathbf{d}^{+},\mathbf{A},\mathbf{M}\)</td></tr>
+        <tr class="alg-row alg-spacer"><td colspan="2"></td></tr>
+        <tr class="alg-row"><td class="alg-no">31:</td><td class="alg-stmt"><span class="alg-keyword">function</span> \(\operatorname{Priority}(\ell,d,s,\alpha)\)</td></tr>
+        <tr class="alg-row indent-1"><td class="alg-no">32:</td><td class="alg-stmt"><span class="alg-keyword">if</span> \(s=\mathrm{PathProbability}\) <span class="alg-keyword">then return</span> \(\ell\)</td></tr>
+        <tr class="alg-row indent-1"><td class="alg-no">33:</td><td class="alg-stmt"><span class="alg-keyword">if</span> \(s=\mathrm{AverageLogProbability}\) <span class="alg-keyword">then return</span> \(\ell/(d+1)\)</td></tr>
+        <tr class="alg-row indent-1"><td class="alg-no">34:</td><td class="alg-stmt"><span class="alg-keyword">if</span> \(s=\mathrm{DepthBonus}\) <span class="alg-keyword">then return</span> \(\ell+\alpha(d+1)\)</td></tr>
+        <tr class="alg-row"><td class="alg-no">35:</td><td class="alg-stmt"><span class="alg-keyword">end function</span></td></tr>
+        </tbody>
+      </table>
     </div>
-    <div class="algorithm-priority"><span>\(\operatorname{Priority}(\ell,d,s,\alpha)=\)</span><span>\(\ell\), if \(s=\textsc{PathProbability}\)</span><span>\(\ell/(d+1)\), if \(s=\textsc{AverageLogProbability}\)</span><span>\(\ell+\alpha(d+1)\), if \(s=\textsc{DepthBonus}\)</span></div>
     <p class="algorithm-caption"><strong>Semantics.</strong> The heap orders candidates by descending priority and ascending insertion serial. Set \(U\) uses the key \((\mathrm{parent},\mathrm{token\ ID})\) to enforce sibling-token uniqueness. Materialization records topology; the target evaluates each unique node once. Selector priority allocates the node budget, while target predictions determine acceptance.</p>
   </figure>
   <h3>2.6 维度、索引约定与算法边界</h3>

@@ -134,23 +134,25 @@ tbody th { width: 180px; font-weight: 600; }
   a { color: inherit; text-decoration: none; }
 }
 
-/* LaTeX-paper-style algorithmic rendering. */
-.algorithm { margin: 10pt 0 13pt; border-top: 1pt solid var(--ink); border-bottom: 1pt solid var(--ink); color: var(--ink); }
-.algorithm-title { display: flex; gap: 10pt; align-items: baseline; padding: 5pt 4pt; border-bottom: 0.5pt solid var(--ink); font-size: 9.5pt; }
-.algorithm-title strong { font-variant: small-caps; letter-spacing: 0.02em; }
-.algorithm-io { display: grid; grid-template-columns: 38pt minmax(0, 1fr); gap: 5pt; padding: 4pt; font-size: 8.7pt; line-height: 1.35; }
-.algorithm-io + .algorithm-io { padding-top: 0; padding-bottom: 6pt; border-bottom: 0.5pt solid var(--line); }
-.algorithm-io strong { font-variant: small-caps; white-space: nowrap; }
-.algorithmic { padding: 6pt 3pt 7pt; overflow-x: auto; font-family: "Times New Roman"; font-size: 8.8pt; line-height: 1.38; }
-.alg-line { display: grid; grid-template-columns: 22pt minmax(560px, 1fr); min-height: 13pt; }
-.alg-no { padding-right: 7pt; color: #666; font-size: 7.8pt; text-align: right; user-select: none; }
-.alg-stmt { padding-left: 0; white-space: nowrap; }
-.alg-line.indent-1 .alg-stmt { padding-left: 14pt; }
-.alg-line.indent-2 .alg-stmt { padding-left: 28pt; }
+/* LaTeX paper-style algorithm/algorithmic rendering. */
+.algorithm { margin: 10pt 0 13pt; overflow: hidden; border-top: 1pt solid var(--ink); border-bottom: 1pt solid var(--ink); color: var(--ink); }
+.algorithm-title { display: block; padding: 4.5pt 3pt; border-bottom: 0.5pt solid var(--ink); font-size: 9.5pt; }
+.algorithm-title strong { margin-right: 5pt; font-variant: small-caps; letter-spacing: 0.015em; }
+.algorithm-io { display: block; padding: 3pt 4pt 1pt; font-size: 8.7pt; line-height: 1.34; }
+.algorithm-io + .algorithm-io { padding-top: 1pt; padding-bottom: 5pt; border-bottom: 0.5pt solid var(--line); }
+.algorithm-io strong { display: inline-block; min-width: 39pt; font-variant: small-caps; }
+.algorithmic-wrap { width: 100%; padding: 5pt 3pt 6pt; overflow-x: auto; }
+table.algorithmic { display: table; width: 100%; min-width: 650px; margin: 0; border: 0; border-collapse: collapse; background: transparent; font-family: "Times New Roman"; font-size: 8.7pt; line-height: 1.38; white-space: normal; }
+table.algorithmic tbody, table.algorithmic tr, table.algorithmic td { border: 0; background: transparent; }
+table.algorithmic td { padding-top: 0.6pt; padding-bottom: 0.6pt; vertical-align: top; }
+table.algorithmic .alg-no { width: 27pt; padding-right: 8pt; color: #666; font-size: 7.8pt; text-align: right; white-space: nowrap; user-select: none; }
+table.algorithmic .alg-stmt { padding-right: 3pt; padding-left: 0; white-space: nowrap; }
+table.algorithmic .indent-1 .alg-stmt { padding-left: 15pt; }
+table.algorithmic .indent-2 .alg-stmt { padding-left: 30pt; }
+table.algorithmic .alg-spacer td { height: 4pt; padding: 0; }
 .alg-keyword { font-variant: small-caps; font-weight: 600; }
-.alg-comment { float: right; padding-left: 10pt; color: var(--muted); font-style: italic; }
-.algorithm-priority { display: grid; grid-template-columns: 1.25fr 1fr 1.35fr 1fr; gap: 5pt; padding: 6pt 5pt; border-top: 0.5pt solid var(--line); font-size: 8.2pt; text-align: center; }
-.algorithm-caption { margin: 0; padding: 6pt 5pt; border-top: 0.5pt solid var(--line); color: var(--muted); font-size: 8.5pt; text-align: justify; }
+.alg-comment { margin-left: 12pt; color: var(--muted); font-style: italic; }
+.algorithm-caption { margin: 0; padding: 5pt 4pt; border-top: 0.5pt solid var(--line); color: var(--muted); font-size: 8.4pt; line-height: 1.32; text-align: justify; }
 .algorithm mjx-container { margin: 0 !important; }
-@media (max-width: 640px) { .algorithm-priority { grid-template-columns: 1fr; text-align: left; } .alg-comment { float: none; display: block; padding-left: 0; } }
-@media print { .algorithm { break-inside: avoid; } .algorithmic { overflow: visible; } .alg-line { grid-template-columns: 22pt 1fr; } .alg-stmt { white-space: normal; } }
+@media (max-width: 640px) { table.algorithmic { display: table; white-space: normal; } .algorithm-io strong { min-width: 34pt; } }
+@media print { .algorithm { break-inside: avoid; } .algorithmic-wrap { overflow: visible; } table.algorithmic { min-width: 0; font-size: 8pt; } table.algorithmic .alg-stmt { white-space: normal; } }

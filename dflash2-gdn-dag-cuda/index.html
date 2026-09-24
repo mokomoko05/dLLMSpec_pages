@@ -35,6 +35,7 @@
   <li><a href="#correctness">正确性与失败尝试</a></li>
   <li><a href="#budget-sweep">预算/分枝策略探索</a></li><li><a href="#limits">边界与下一步实验</a></li>
   <li><a href="#cache-reuse">cache reuse 单数据集诊断</a></li>
+  <li><a href="#memory-budget">Tree node 显存预算</a></li>
   <li><a href="#records">原始记录</a></li>
 </ol></nav>
 <section id="scope"><h2>1. 问题与可比口径</h2>
@@ -233,6 +234,13 @@
   <p>2026-09-23 在单张 A100 80GB PCIe 上，以同一 vLLM commit、Qwen3.8-27B / DFlash2 权重和 tree N=21/C=2、block16，对照旧 full-state tree 与新 speculative cache 复用路径。GSM8K 前 128 条、thinking off、greedy、每条最多 256 tokens、并发 1；两条路径的文本、reasoning、completion token 数与停止原因 <strong>128/128 完全一致</strong>，均生成 32,169 tokens。</p>
   <table><caption>表 13. 单次顺序运行；吞吐不含模型加载与一条 warmup</caption><thead><tr><th>路径</th><th>请求 wall time</th><th>输出吞吐</th><th>平均 tau（HTTP 计数器）</th></tr></thead><tbody><tr><td>full-state tree</td><td>466.503 s</td><td>68.958 tok/s</td><td>9.2298</td></tr><tr><td>cache-reuse tree</td><td>470.913 s</td><td>68.312 tok/s</td><td>9.2298</td></tr></tbody></table>
   <p class="note">cache/full 吞吐比为 0.9906（本次低 0.94%）。这是<strong>一个数据集、每点一次、固定先后顺序</strong>的诊断，不足以声称稳定回退或与历史不同 commit/上下文配置的吞吐结果计算 speedup。服务配置为 max-model-len=1024、gpu-memory-utilization=.92、eager；需要反序/交错复测才可判断小幅差异是否稳定。<a href="https://github.com/mokomoko05/dLLMSpec/tree/main/agentWorkSpace/20260923_204800_tree_cache_reuse_throughput_gsm8k128">完整配置、脚本、原始数据位置与结果</a>。</p>
+</section>
+<section id="memory-budget"><h2>11b. 当前 tree node 显存预算（粗略上限）</h2>
+  <p>基于当前 Qwen3.8-27B、单张 A100 80GB、<code>gpu-memory-utilization=0.90</code> 的服务日志和代码 tensor shape，不能把理论容量当成可安全配置上限。启动时实测分解为：模型权重 <strong>54.87 GiB</strong>、profiling peak activation <strong>0.43 GiB</strong>、non-Torch/CUDA <strong>0.11 GiB</strong>、KV/cache reservation <strong>15.92 GiB</strong>，合计 <strong>71.33 GiB</strong>；A100 报告容量约 79.25 GiB，启动预算余量约 7.92 GiB。正式请求期间 <code>nvidia-smi</code> 约 73.30 GiB，瞬时余量约 5.95 GiB。</p>
+  <table><caption>表 14. 可由源码 shape 直接计算的 tree state</caption><thead><tr><th>项目</th><th>shape / 计算</th><th>显存</th></tr></thead><tbody><tr><td>一个 node 的 GDN recurrent state</td><td>48 layers × 48 × 128 × 128 × FP32</td><td>144 MiB</td></tr><tr><td>一个 node 的 tree convolution state</td><td>48 × 10,240 × 3 × BF16</td><td>2.8125 MiB</td></tr><tr><td>full-state tree 一个 node</td><td>recurrent + convolution</td><td><strong>146.8125 MiB</strong></td></tr><tr><td>cache-reuse 一个完整 speculative slot（block16）</td><td>144 MiB recurrent + 16.875 MiB conv cache</td><td><strong>160.875 MiB</strong></td></tr></tbody></table>
+  <p>tree 实际状态行数为 <code>R=N+1</code>（包含 anchor）。因此 full-state retained tree state 约为 N=21：<strong>3.15 GiB</strong>；N=35：<strong>5.16 GiB</strong>；N=42：<strong>6.17 GiB</strong>。cache reuse 不再额外创建 <code>[R,48,128,128]</code> tensor，而是占用 speculative cache slots；因此它消除重复 tensor，不是零显存。</p>
+  <table><caption>表 15. 单卡 node 数量估计</caption><thead><tr><th>口径</th><th>估计</th><th>解释</th></tr></thead><tbody><tr><td>把启动预算余量全部用于完整 slot</td><td>约 50 slots</td><td>7.92 GiB ÷ 160.875 MiB；理论上限，不安全</td></tr><tr><td>按请求期间实测余量</td><td>约 37–38 slots</td><td>5.95 GiB ÷ 160.875 MiB；仍未扣 transient/workspace</td></tr><tr><td>考虑 activation/workspace/碎片后的安全估计</td><td><strong>约 24–32 个新增 node</strong></td><td>工程估计，必须通过 profile 验证</td></tr></tbody></table>
+  <p class="note">模型、KV/cache、activation 和 workspace 的总量已有实测，但当前日志还没有把 15.92 GiB cache reservation 拆成 attention KV、Mamba recurrent、conv cache 和 page 对齐，也没有把请求期间新增约 1.96 GiB 逐项拆平。因此 24–32 是保守工程估计，不是正式容量承诺。当前代码的 tree 配置上限仍是 N=21（实际 R=22）；N=35/42 进入显存风险区。完整计算和限制见 <a href="https://github.com/mokomoko05/dLLMSpec/tree/main/agentWorkSpace/20260923_204800_tree_cache_reuse_throughput_gsm8k128">显存/吞吐实验记录</a>。</p>
 </section>
 <section id="records" class="references"><h2>12. 原始记录</h2><ol><li><a href="https://github.com/mokomoko05/dLLMSpec/tree/exp/20260919_tree_report_multidataset128/agentWorkSpace/20260919_142207_tree_report_multidataset128">七数据集750请求、当前kernel profile与完整结果JSON</a></li>
   <li><a href="CODE_AUDIT.md">完整代码diff、行号、profile与正式runner审查清单</a></li>

@@ -323,6 +323,21 @@ for (const paper of papers) {
   };
 }
 
+const reproductionThinking = {
+  eagle3: "Thinking：不适用（LLaMA-3.1-Instruct，无 Qwen Thinking 开关）",
+  dflash: "Thinking：关闭（non-thinking）",
+  domino: "Thinking：关闭（non-thinking）",
+  dspark: "Thinking：关闭（non-thinking）",
+  dominotree: "Thinking：关闭（non-thinking）",
+  dartree: "Thinking：关闭（non-thinking）"
+};
+
+for (const paper of papers) {
+  if (paper.reproduction && reproductionThinking[paper.id]) {
+    paper.reproduction.thinking = reproductionThinking[paper.id];
+  }
+}
+
 const positions = {
   eagle3: [28, 112],
   dflash: [28, 320],
@@ -577,7 +592,7 @@ function renderResultTables(reproduction) {
     ? `<div class="result-warning">${reproduction.warning}</div>`
     : "";
   const sections = reproduction.sections.map((section) => `<section class="result-section">
-    <h3>${section.title}</h3>
+    <h3>${section.title}<span class="result-thinking">${reproduction.thinking || "Thinking：未记录"}</span></h3>
     <div class="result-table-wrap"><table class="result-table">
       <thead><tr>${section.headers.map((header) => `<th scope="col">${header}</th>`).join("")}</tr></thead>
       <tbody>${section.rows.map((row) => `<tr>${row.map((cell, index) => index === 0 ? `<th scope="row">${renderResultCell(cell, true)}</th>` : `<td>${renderResultCell(cell, false)}</td>`).join("")}</tr>`).join("")}</tbody>

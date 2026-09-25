@@ -29,7 +29,7 @@
 | packed-breakdown | 关闭 | benchmark 开关为 store_true，启动命令未传入 |
 | qwen38-dflash2-dspark | 混合 | DSpark 服务对比为 thinking=xhigh；tree 与官方复现实验为关闭 |
 | speculative-trace-dashboard | 关闭 | DFlash、DeepSpec、EAGLE 三类 trace collector 均显式 false |
-| paper-landscape | 不适用 | 文献综述与方法汇总，不是单一数据集评测 run |
+| paper-landscape | 本地复现均关闭或不适用 | DFlash、Domino、DSpark、DominoTree、DARTree 均为 non-thinking；EAGLE-3 使用 LLaMA-3.1，不存在 Qwen Thinking 开关 |
 
 ## 重点原始证据
 
@@ -46,4 +46,19 @@
 - 页面只有一种协议时，在页面摘要和所有相关数据表 caption 标注 Thinking：关闭。
 - 页面混合多种协议时，页面摘要标为混合，并在每张表上分别标注关闭、开启或 xhigh。
 - 36 个独立 trace dashboard 没有统一数据表 caption，因此在页面顶部加入显式 non-thinking 横幅。
-- paper-landscape 未添加实验状态样式，因为它不是单一实验结果页。
+- paper-landscape 的本地复现结果由 JavaScript 动态生成，因此在每个动态结果表标题旁分别添加 Thinking 状态；论文原图不冒充本地运行配置。
+
+## paper-landscape 本地论文复现逐项核对
+
+| 复现 | Thinking | 原始记录或代码证据 |
+|---|---|---|
+| EAGLE-3 | 不适用 | 本地复现模型为 LLaMA-3.1-8B-Instruct，不是带 Qwen Thinking 开关的模型 |
+| DFlash Table 1 / EAGLE-3 对照 | 关闭 | benchmark_eagle3.py 显式 enable_thinking=False；计划和结果均记录 thinking disabled |
+| DFlash Table 3 风格 Spec-v2 | 关闭 | EXPERIMENT_PLAN.md 与 FINAL_SPECV2_RESULTS.md 均明确 non-thinking |
+| Domino Table 1 | 关闭 | EXPERIMENT_PLAN.md 明确 thinking 关闭 |
+| DSpark Qwen3-8B Table 1 | 关闭 | README 与 FINAL_ACCEPTANCE_REPORT.md 明确 non-thinking，summary 记录 thinking=false |
+| DSpark Qwen3-14B Table 1 | 关闭 | run_deepspec_throughput.py 显式 enable_thinking=False |
+| DominoTree Table 1 | 关闭 | pinned benchmark.py 的 warmup 和正式 prompt 均显式 enable_thinking=False |
+| DARTree Table 1 | 关闭 | eval_dartree.py 的正式 prompt 显式 enable_thinking=False |
+
+因此 paper-landscape 当前展示的本地论文复现中，没有 Thinking 开启的正式结果。DFlash 论文图片包含论文原始 thinking-mode 实验，但该部分不是本地已复现数据表，不能与本地 Table 1/Table 3 复现混为一谈。

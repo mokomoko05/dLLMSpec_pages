@@ -822,6 +822,14 @@ h1 {
   color: #7b6250;
 }
 
+.result-thinking {
+  display: inline-block;
+  margin-left: 0.55rem;
+  color: #315f4b;
+  font-size: 0.62rem;
+  font-weight: 650;
+}
+
 .result-note {
   margin: 5px 0 0;
   color: var(--muted);

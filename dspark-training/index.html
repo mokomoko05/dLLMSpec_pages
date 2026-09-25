@@ -8,7 +8,7 @@
     <link rel="stylesheet" href="styles.css">
   </head>
   <body>
-  <div class="thinking-status"><strong>Thinking 设置：</strong>关闭（target 重生成与评测为 non-thinking）</div>
+  <div class="thinking-status"><strong>Thinking 设置：</strong>关闭（target 重生成与评测均为 non-thinking）</div>
     <nav class="top-nav" aria-label="站点导航">
       <a href="../">← 内容目录</a>
       <span>dLLMSpec 实验报告</span>
@@ -113,7 +113,7 @@
         <section id="stages">
           <h2>3. 实验过程</h2>
           <table>
-            <caption>表 1. 三阶段实验概览</caption>
+            <caption>表 1. 三阶段实验概览<span class="thinking-label"> · Thinking：关闭（non-thinking）</span></caption>
             <thead>
               <tr><th>阶段</th><th>数据</th><th>训练</th><th>主要目的</th><th>结果</th></tr>
             </thead>
@@ -218,7 +218,7 @@
         <section id="results">
           <h2>6. 结果</h2>
           <table>
-            <caption>表 3. Validation 与真实 HumanEval acceptance 对比</caption>
+            <caption>表 3. Validation 与真实 HumanEval acceptance 对比<span class="thinking-label"> · Thinking：关闭（non-thinking）</span></caption>
             <thead>
               <tr><th>Checkpoint</th><th>Validation loss</th><th>Proxy accept length</th><th>Real accept length</th><th>相对 5K real</th></tr>
             </thead>

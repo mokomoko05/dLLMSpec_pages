@@ -10,7 +10,7 @@
     <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
   </head>
   <body>
-  <div class="thinking-status"><strong>Thinking 设置：</strong>混合：训练数据为 thinking；正式 acceptance 评测为 non-thinking</div>
+  <div class="thinking-status"><strong>Thinking 设置：</strong>混合：离线训练/validation 使用 thinking 轨迹；正式四数据集 acceptance 评测关闭 thinking</div>
     <nav class="top-nav" aria-label="站点导航">
       <a href="../">← 内容目录</a>
       <span>dLLMSpec 实验报告</span>
@@ -204,7 +204,7 @@
         <section id="offline-results">
           <h2>6. 离线 Validation 结果</h2>
           <table>
-            <caption>表 3. 同一 validation forward 内的 base/refined 对照</caption>
+            <caption>表 3. 同一 validation forward 内的 base/refined 对照<span class="thinking-label"> · Thinking：开启（thinking 训练/validation 轨迹）</span></caption>
             <thead><tr><th>阶段</th><th>Refined loss</th><th>Base full acc</th><th>Refined full acc</th><th>Base EAL proxy</th><th>Refined EAL proxy</th><th>Changed top-1</th></tr></thead>
             <tbody>
               <tr><td>5K × 1</td><td>0.2077</td><td>0.3104</td><td><strong>0.3214</strong> (+0.0110)</td><td>1.6975</td><td><strong>1.8037</strong> (+0.1062)</td><td>23.83%</td></tr>
@@ -244,7 +244,7 @@
           <h2>8. 真实 Acceptance 结果</h2>
           <p>正式评测使用 Transformers + PyTorch SDPA（scaled dot-product attention，缩放点积注意力）后端、4 卡数据并行、每个数据集 128 条、每条最多 512 个新 token、Qwen3 non-thinking chat template、temperature 0。这里报告的是 acceptance 正确性实验，不是经过 FlashAttention/vLLM 优化的部署吞吐 benchmark。</p>
           <table>
-            <caption>表 5. 四数据集成对真实生成结果</caption>
+            <caption>表 5. 四数据集成对真实生成结果<span class="thinking-label"> · Thinking：关闭（non-thinking）</span></caption>
             <thead><tr><th>数据集</th><th>Verification 轮数（base / refined）</th><th>Base accepted</th><th>Refined accepted</th><th>变化</th><th>每 token 时间变化</th><th>Greedy 输出一致</th></tr></thead>
             <tbody>
               <tr><td>GSM8K</td><td>6,159 / 6,301</td><td>5.2913</td><td>5.1252</td><td>−0.1661（−3.14%）</td><td>6.847 → 7.038 ms（+2.79%）</td><td>128 / 128</td></tr>
@@ -262,7 +262,7 @@
           <h2>9. Thinking 数据诊断</h2>
           <h3>9.1 官方训练数据与本轮数据的实际差异</h3>
           <table>
-            <caption>表 6. Prompt 同源不等于 response 轨迹相同</caption>
+            <caption>表 6. Prompt 同源不等于 response 轨迹相同<span class="thinking-label"> · Thinking：混合：训练 thinking；正式评测 non-thinking</span></caption>
             <thead><tr><th>项目</th><th>官方 DeepSpec Qwen3 DFlash/DSpark</th><th>本轮 refiner</th></tr></thead>
             <tbody>
               <tr><td>Prompt 来源</td><td><code>mlabonne/open-perfectblend</code></td><td>社区 PerfectBlend Qwen3-8B regenerated 数据，prompt 分布同源</td></tr>

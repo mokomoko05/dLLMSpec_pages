@@ -156,3 +156,5 @@ table.algorithmic .alg-spacer td { height: 4pt; padding: 0; }
 .algorithm mjx-container { margin: 0 !important; }
 @media (max-width: 640px) { table.algorithmic { display: table; white-space: normal; } .algorithm-io strong { min-width: 34pt; } }
 @media print { .algorithm { break-inside: avoid; } .algorithmic-wrap { overflow: visible; } table.algorithmic { min-width: 0; font-size: 8pt; } table.algorithmic .alg-stmt { white-space: normal; } }
+
+.thinking-label { white-space: normal; font-weight: 600; color: #244f73; }

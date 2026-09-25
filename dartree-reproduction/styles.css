@@ -76,3 +76,5 @@ tbody th { width: 180px; font-weight: 600; }
   body { font-size: 10pt; }
   a { color: inherit; text-decoration: none; }
 }
+
+.thinking-label { white-space: normal; font-weight: 600; color: #244f73; }

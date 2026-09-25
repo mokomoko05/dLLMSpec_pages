@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <div class="thinking-status"><strong>Thinking 设置：</strong>混合/按实验而定；需以各原始实验记录为准</div>
+  <div class="thinking-status"><strong>Thinking 设置：</strong>关闭（本页 Domino 主矩阵与 DFlash 多轮去噪均为 non-thinking）</div>
 <main>
   <nav><a href="../">← 返回目录</a></nav>
   <header>
@@ -26,6 +26,7 @@
       <article><strong>5.890</strong><span>本地 per-step acceptance（micro）</span></article>
     </div>
     <table>
+      <caption>Domino 主矩阵 · Thinking：关闭（non-thinking）</caption>
       <thead><tr><th>模型</th><th>温度</th><th>点数</th><th>本地 speedup</th><th>论文 speedup</th><th>本地 per-step τ</th><th>本地 per-sample τ</th><th>论文 per-sample τ</th></tr></thead>
       <tbody>
         <tr><td>Qwen3-4B</td><td>0</td><td>8</td><td>5.3796×</td><td>5.1937×</td><td>6.640</td><td>7.071</td><td>7.076</td></tr>
@@ -44,6 +45,7 @@
     <div class="title-row"><h2>DFlash 多轮去噪</h2><span class="badge negative">No-Go</span></div>
     <p>在现有 Qwen3-8B DFlash block-16 checkpoint 上，测试无需重训的 prefix reveal 与 confidence top-8 两轮 refinement。所有输出仍经过 target verification，保持 lossless。</p>
     <table>
+      <caption>DFlash 多轮去噪 GSM8K 评测 · Thinking：关闭（non-thinking）</caption>
       <thead><tr><th>配置</th><th>Tau</th><th>Decode ms/token</th><th>相对 baseline</th></tr></thead>
       <tbody>
         <tr><td>single/1 baseline</td><td>5.874</td><td>8.057</td><td>—</td></tr>

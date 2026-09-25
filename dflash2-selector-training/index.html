@@ -10,7 +10,7 @@
   <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
 </head>
 <body>
-  <div class="thinking-status"><strong>Thinking 设置：</strong>关闭（训练/评测使用 non-thinking 轨迹）</div>
+  <div class="thinking-status"><strong>Thinking 设置：</strong>关闭（训练与评测均使用 non-thinking 轨迹）</div>
 <nav class="top-nav" aria-label="站点导航"><a href="../">← 内容目录</a><span>dLLMSpec 实验报告</span></nav>
 <main><article>
 <header class="article-header">
@@ -173,14 +173,14 @@
 <section id="results"><h2>7. 真实 round 结果</h2>
   <h3>7.1 5k 四组训练对照（GSM8K 前 512 条）</h3>
   <p>四组共享 baseline：15,232 个 verification rounds，baseline 平均 target 接受 draft 长度为 3.330226。所有 selector 都是完整多轮 greedy speculative decoding。</p>
-  <table><caption>表 3. 学习率与 predecessor 策略对照</caption><thead><tr><th>配置</th><th>Selector EAL</th><th>Δ EAL</th><th>首 slot Δ</th><th>paired bootstrap 95% CI</th></tr></thead><tbody>
+  <table><caption>表 3. 学习率与 predecessor 策略对照<span class="thinking-label"> · Thinking：关闭（non-thinking）</span></caption><thead><tr><th>配置</th><th>Selector EAL</th><th>Δ EAL</th><th>首 slot Δ</th><th>paired bootstrap 95% CI</th></tr></thead><tbody>
     <tr><td>lr=3e-5，teacher</td><td>3.331604</td><td>+0.001378</td><td>−0.11 pp</td><td>[−0.01216, +0.01685]</td></tr>
     <tr><td>lr=3e-5，roll-in 0.5</td><td>3.328258</td><td>−0.001968</td><td>−0.05 pp</td><td>[−0.01457, +0.01298]</td></tr>
     <tr><td><strong>lr=1e-4，teacher</strong></td><td><strong>3.378294</strong></td><td><strong>+0.048068</strong></td><td><strong>+0.22 pp</strong></td><td><strong>[+0.03054, +0.08571]</strong></td></tr>
     <tr><td>lr=1e-4，roll-in 0.5</td><td>3.342882</td><td>+0.012656</td><td>+0.20 pp</td><td>[−0.00312, +0.04704]</td></tr>
   </tbody></table>
   <h3>7.2 5k teacher-forced 版本跨数据集复核</h3>
-  <table><caption>表 4. 完整多轮 greedy 评测；max new tokens=128</caption><thead><tr><th>数据集</th><th>样本</th><th>Base EAL</th><th>Selector EAL</th><th>Δ</th><th>结论</th></tr></thead><tbody>
+  <table><caption>表 4. 完整多轮 greedy 评测；max new tokens=128<span class="thinking-label"> · Thinking：关闭（non-thinking）</span></caption><thead><tr><th>数据集</th><th>样本</th><th>Base EAL</th><th>Selector EAL</th><th>Δ</th><th>结论</th></tr></thead><tbody>
     <tr><td>GSM8K</td><td>1319</td><td>3.331744</td><td>3.379954</td><td>+0.048210</td><td>明确正；CI [+0.03663,+0.07109]</td></tr>
     <tr><td>MATH-500</td><td>500</td><td>4.519966</td><td>4.624116</td><td>+0.104150</td><td>明确正；CI [+0.06742,+0.16195]</td></tr>
     <tr><td>MBPP</td><td>257</td><td>3.675798</td><td>3.722437</td><td>+0.046639</td><td>方向正，CI 跨零</td></tr>
@@ -189,7 +189,7 @@
     <tr><td>LiveCodeBench</td><td>1055</td><td>4.044224</td><td>4.037325</td><td>−0.006899</td><td>近似持平，轻微负</td></tr>
   </tbody></table>
   <h3>7.3 30k 一 epoch：all-predecessor 与 teacher-forced</h3>
-  <table><caption>表 5. full-round 结果；AIME25 30 条、MT-Bench 80 条，其余 128 条</caption><thead><tr><th>数据集</th><th>Base</th><th>All-predecessor</th><th>All Δ</th><th>Teacher-forced</th><th>Teacher Δ</th></tr></thead><tbody>
+  <table><caption>表 5. full-round 结果；AIME25 30 条、MT-Bench 80 条，其余 128 条<span class="thinking-label"> · Thinking：关闭（non-thinking）</span></caption><thead><tr><th>数据集</th><th>Base</th><th>All-predecessor</th><th>All Δ</th><th>Teacher-forced</th><th>Teacher Δ</th></tr></thead><tbody>
     <tr><td>GSM8K</td><td>3.26520</td><td>3.32398</td><td>+0.05878</td><td>3.54535</td><td><strong>+0.28015</strong></td></tr>
     <tr><td>Math500</td><td>4.53322</td><td>4.53880</td><td>+0.00558</td><td>4.80155</td><td><strong>+0.26833</strong></td></tr>
     <tr><td>AIME25</td><td>4.70206</td><td>4.58671</td><td>−0.11536</td><td>4.83837</td><td><strong>+0.13630</strong></td></tr>
@@ -201,7 +201,7 @@
   <p>这张表的主要差异是 loss 是否对每个 predecessor row 重复监督；teacher-forced 版本在全部 7 个数据集上转为正收益，支持监督条件应与推理路径条件一致的判断。</p>
   <h3>7.4 30k×5 epoch 趋势</h3>
   <p>下表为每个 checkpoint 相对冻结 baseline 的 EAL 增量；GSM8K 使用 128 条，AIME25 使用 30 条，其余数据集使用 80 或 128 条，均为相同 prompt、相同 greedy full-round 口径。</p>
-  <table><caption>表 6. 五个 epoch 的 target 接受 draft token 增量</caption><thead><tr><th>数据集</th><th>epoch 0</th><th>epoch 1</th><th>epoch 2</th><th>epoch 3</th><th>epoch 4</th></tr></thead><tbody>
+  <table><caption>表 6. 五个 epoch 的 target 接受 draft token 增量<span class="thinking-label"> · Thinking：关闭（non-thinking）</span></caption><thead><tr><th>数据集</th><th>epoch 0</th><th>epoch 1</th><th>epoch 2</th><th>epoch 3</th><th>epoch 4</th></tr></thead><tbody>
     <tr><td>GSM8K</td><td>+0.3704</td><td>+0.4307</td><td>+0.4476</td><td><strong>+0.4686</strong></td><td>+0.4580</td></tr>
     <tr><td>MATH-500</td><td>+0.3014</td><td>+0.4121</td><td>+0.4138</td><td><strong>+0.4484</strong></td><td>+0.4417</td></tr>
     <tr><td>AIME25</td><td>+0.1150</td><td>+0.2287</td><td>+0.2199</td><td><strong>+0.2329</strong></td><td>+0.2159</td></tr>
@@ -218,7 +218,7 @@
   <p><strong>在线评测</strong>复用官方 <code>dflash_generate</code> 的 prefill、DynamicCache、block verification、cache crop 和 EOS 流程。target 先产生首个生成 token 作为 anchor，随后 baseline 与 selector 各自完整解码；selector 只替换 proposal callback。每条样本核对两条路径的 target greedy token 序列，并计算该样本各 verification round 的 accepted draft 平均值，再对样本等权平均。这个流程与部署时的生成循环一致，因此表 7 作为正式结果。</p>
   <p>正式矩阵使用 Qwen3-8B / Qwen3-8B-DFlash-b16、BF16、SDPA、block size 16、temperature 0、最多 2048 new tokens；GSM8K、MATH-500、MBPP、HumanEval 每点 128 条，AIME25 每点 30 条。五个 checkpoint 共 25 点，全部运行于单张 A100 80GB。</p>
   <h3>8.2 完整 25 点结果</h3>
-  <table><caption>表 7. 官方在线生成循环；per-sample accepted draft tokens / verification round</caption><thead><tr><th>方法 / checkpoint</th><th>GSM8K</th><th>MATH-500</th><th>MBPP</th><th>HumanEval</th><th>AIME25</th></tr></thead><tbody>
+  <table><caption>表 7. 官方在线生成循环；per-sample accepted draft tokens / verification round<span class="thinking-label"> · Thinking：关闭（non-thinking）</span></caption><thead><tr><th>方法 / checkpoint</th><th>GSM8K</th><th>MATH-500</th><th>MBPP</th><th>HumanEval</th><th>AIME25</th></tr></thead><tbody>
     <tr><td>Base</td><td>5.5196</td><td>7.2937</td><td>4.9814</td><td>5.5709</td><td>6.5930</td></tr>
     <tr><td>Selector epoch 0</td><td>5.7332</td><td>7.4428</td><td>5.1968</td><td>5.7829</td><td>6.5808</td></tr>
     <tr><td>Selector epoch 1</td><td>5.8258</td><td>7.5155</td><td>5.2409</td><td>5.8565</td><td>6.6632</td></tr>

@@ -6,7 +6,7 @@
 <title>Elastic DARTree 系统探索</title><link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <div class="thinking-status"><strong>Thinking 设置：</strong>未记录（该页没有明确的 thinking 参数）</div>
+  <div class="thinking-status"><strong>Thinking 设置：</strong>关闭（non-thinking；探针复用 eval_dartree.py，明确 enable_thinking=false）</div>
 <nav class="top-nav" aria-label="站点导航"><a href="../">← 内容目录</a><span>dLLMSpec 实验报告</span></nav>
 <main><article>
 <header class="article-header">
@@ -205,7 +205,7 @@
 
 <h3>4.2 具体例子：前缀 512、batch 4</h3>
 <p>固定 B256 时，一批要验证 <code>4×257=1028</code> 个 query；容量选择器改为每请求 B64，总 query 为 <code>4×65=260</code>。B64 的验证延迟为 37.909 ms，相对该状态的固定 B256 低 52.46%。减少的是一次 target verification 的 latency，不包含 acceptance 下降后可能增加的轮次。</p>
-<table><caption>18 个状态上的 5% 平台容量</caption><thead><tr><th>前缀长度</th><th>batch 1</th><th>batch 2</th><th>batch 4</th></tr></thead><tbody>
+<table><caption>18 个状态上的 5% 平台容量<span class="thinking-label"> · Thinking：关闭（non-thinking）</span></caption><thead><tr><th>前缀长度</th><th>batch 1</th><th>batch 2</th><th>batch 4</th></tr></thead><tbody>
 <tr><td>128</td><td>B384</td><td>B128</td><td>B64</td></tr>
 <tr><td>256–512</td><td>B256</td><td>B128</td><td>B64</td></tr>
 <tr><td>2048</td><td>B128</td><td>B64</td><td>B16</td></tr>

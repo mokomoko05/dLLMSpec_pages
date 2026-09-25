@@ -74,7 +74,7 @@
         <h2>3. 单次 target forward 与 packed-path GDN</h2>
         <p>target runner 将 anchor 与 21 个唯一 tree node 放入一次 flattened forward。full-attention 层通过 ancestor mask 限制每个节点只能读取历史 KV 和自己的祖先链，再把所有 leaf query 打包为每层一次 ragged FlashAttention。</p>
         <p>Qwen3.8 的 GDN 同时维护 causal-conv rolling buffer 和 recurrent state，分支存在严格父子依赖。当前实现把所有 root-to-leaf paths 组成一个 varlen batch；共享前缀在 GDN 内重复计算，但整层只发起一次 grouped conv 和一次 fused recurrent kernel。计算后选取重复节点的首次结果，映射回唯一 tree rows。</p>
-        <table><caption>表 1. 正式 trace 验收</caption><thead><tr><th>项目</th><th>结果</th></tr></thead><tbody>
+        <table><caption>表 1. 正式 trace 验收<span class="thinking-label"> · Thinking：关闭（non-thinking）</span></caption><thead><tr><th>项目</th><th>结果</th></tr></thead><tbody>
           <tr><td>target forward / verification step</td><td>1</td></tr>
           <tr><td>full-attention 层</td><td>16；每层 1 个 ragged kernel</td></tr>
           <tr><td>GDN 层</td><td>48；每层 1 conv + 1 recurrent wave</td></tr>
@@ -136,7 +136,7 @@
           =\sum_{v\in V}m(v),
         \]</p>
         <p>其中 $m(v)$ 是节点 $v$ 的后代叶数量；公共前缀会按后代 leaf 数重复计算。路径打包使每个 GDN 层只启动一次 grouped conv 和一次 fused recurrent kernel，但减少 launch 次数并不减少这部分重复算术。</p>
-        <table><caption>表 2. GDN tree expansion 的实际规模</caption><thead><tr><th>项目</th><th>规模</th><th>含义</th></tr></thead><tbody>
+        <table><caption>表 2. GDN tree expansion 的实际规模<span class="thinking-label"> · Thinking：关闭（non-thinking）</span></caption><thead><tr><th>项目</th><th>规模</th><th>含义</th></tr></thead><tbody>
           <tr><td>唯一 tree nodes</td><td>21</td><td>逻辑树中只保存一份</td></tr>
           <tr><td>target rows</td><td>22</td><td>anchor + 21 个唯一节点</td></tr>
           <tr><td>GDN path tokens</td><td>27–73，均值 42.805</td><td>展开路径后的实际 GDN 工作量</td></tr>
@@ -148,7 +148,7 @@
       <section id="results">
         <h2>5. GSM8K-32 正式结果</h2>
         <p>tau 按请求独立计算：<code>tau_i = sum(accepted_draft_tokens + 1) / verification_steps</code>，随后对 32 个请求等权汇总。</p>
-        <table><caption>表 3. official DFlash2 与 ours packed tree</caption><thead><tr><th>方法</th><th>n</th><th>mean tau</th><th>median</th><th>p05 / p95</th><th>mean latency</th><th>wall tok/s</th></tr></thead><tbody>
+        <table><caption>表 3. official DFlash2 与 ours packed tree<span class="thinking-label"> · Thinking：关闭（non-thinking）</span></caption><thead><tr><th>方法</th><th>n</th><th>mean tau</th><th>median</th><th>p05 / p95</th><th>mean latency</th><th>wall tok/s</th></tr></thead><tbody>
           <tr><td>official DFlash2</td><td>32</td><td>6.349</td><td>6.268</td><td>5.782 / 7.034</td><td>5.575 s</td><td><strong>70.73</strong></td></tr>
           <tr><td>ours packed tree</td><td>32</td><td><strong>7.174</strong></td><td>7.160</td><td>6.734 / 7.610</td><td>10.106 s</td><td>39.05</td></tr>
           <tr><td>ours / official</td><td>—</td><td><strong>1.130×</strong></td><td>—</td><td>—</td><td>1.813×</td><td>0.552×</td></tr>

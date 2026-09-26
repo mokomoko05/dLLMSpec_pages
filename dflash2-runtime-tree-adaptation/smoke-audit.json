@@ -1,0 +1,108 @@
+{
+  "points": [
+    {
+      "method": "chain_b16",
+      "phase": "smoke",
+      "repeat": 0,
+      "audit_status": "COUNTER_AUDIT_PASS",
+      "errors": []
+    },
+    {
+      "method": "chain_b24",
+      "phase": "smoke",
+      "repeat": 0,
+      "audit_status": "COUNTER_AUDIT_PASS",
+      "errors": []
+    },
+    {
+      "method": "chain_b48",
+      "phase": "smoke",
+      "repeat": 0,
+      "audit_status": "COUNTER_AUDIT_PASS",
+      "errors": []
+    },
+    {
+      "method": "chain_b64",
+      "phase": "smoke",
+      "repeat": 0,
+      "audit_status": "COUNTER_AUDIT_PASS",
+      "errors": []
+    },
+    {
+      "method": "tree_b16_n42_c16",
+      "phase": "smoke",
+      "repeat": 0,
+      "audit_status": "COUNTER_AUDIT_PASS",
+      "errors": []
+    },
+    {
+      "method": "tree_b16_n43_c4",
+      "phase": "smoke",
+      "repeat": 0,
+      "audit_status": "COUNTER_AUDIT_PASS",
+      "errors": []
+    }
+  ],
+  "output_comparisons": [
+    {
+      "phase": "smoke",
+      "repeat": 0,
+      "method": "chain_b16",
+      "dataset": "gsm8k",
+      "paired_requests": 2,
+      "same_prompt": 2,
+      "exact_output_matches": 2,
+      "interpretation": "文本相同不证明state正确；不同也不能未经定位就归因为数值误差或算法错误"
+    },
+    {
+      "phase": "smoke",
+      "repeat": 0,
+      "method": "chain_b24",
+      "dataset": "gsm8k",
+      "paired_requests": 2,
+      "same_prompt": 2,
+      "exact_output_matches": 1,
+      "interpretation": "文本相同不证明state正确；不同也不能未经定位就归因为数值误差或算法错误"
+    },
+    {
+      "phase": "smoke",
+      "repeat": 0,
+      "method": "chain_b48",
+      "dataset": "gsm8k",
+      "paired_requests": 2,
+      "same_prompt": 2,
+      "exact_output_matches": 2,
+      "interpretation": "文本相同不证明state正确；不同也不能未经定位就归因为数值误差或算法错误"
+    },
+    {
+      "phase": "smoke",
+      "repeat": 0,
+      "method": "chain_b64",
+      "dataset": "gsm8k",
+      "paired_requests": 2,
+      "same_prompt": 2,
+      "exact_output_matches": 2,
+      "interpretation": "文本相同不证明state正确；不同也不能未经定位就归因为数值误差或算法错误"
+    },
+    {
+      "phase": "smoke",
+      "repeat": 0,
+      "method": "tree_b16_n42_c16",
+      "dataset": "gsm8k",
+      "paired_requests": 2,
+      "same_prompt": 2,
+      "exact_output_matches": 1,
+      "interpretation": "文本相同不证明state正确；不同也不能未经定位就归因为数值误差或算法错误"
+    },
+    {
+      "phase": "smoke",
+      "repeat": 0,
+      "method": "tree_b16_n43_c4",
+      "dataset": "gsm8k",
+      "paired_requests": 2,
+      "same_prompt": 2,
+      "exact_output_matches": 1,
+      "interpretation": "文本相同不证明state正确；不同也不能未经定位就归因为数值误差或算法错误"
+    }
+  ]
+}

@@ -24,6 +24,7 @@
   </dl>
 </header>
 <section class="abstract"><h2>摘要</h2><p>本页清理并取代旧版阶段报告，完整记录 ours tree 从候选构造、单次 flattened target forward、GDN 父状态执行、paged parent-sparse attention、GPU verification 到 grouped cache commit 的最终路径。Tree 使用与 official DFlash2 完全相同的 draft、candidate selector 和 7-token protected trunk，只在 21-node 预算内加入高概率分枝。</p><p>最终 <code>4ae600a</code> 在七数据集、每方法750请求的A100 eager正式矩阵中，pooled per-request tau从 <strong>6.1797</strong> 提高到 <strong>6.8752（+11.25%，95% CI [10.67%,11.85%]）</strong>，合并completion throughput从 <strong>59.087</strong> 提高到 <strong>68.113 tok/s（1.1528×，+15.28%）</strong>；7/7数据集同时获得tau和E2E吞吐提升。最新同commit matched profile显示tree target kernels比chain多11.203 ms，其中model forward +9.691 ms、grouped commit +1.435 ms；GPU verify仅0.009 ms。结论限于A100 SM80、TP1、batch/concurrency 1、eager、无CUDA Graph。</p></section>
+<p class="note">后续实验（2026-09-26）：<a href="../dflash2-runtime-tree-adaptation/">DFlash2 Runtime 自适应构树实验</a>，查看固定配置公平对照、深度预算矩阵及运行进度。</p>
 <nav class="toc"><h2>目录</h2><ol>
   <li><a href="#scope">问题与可比口径</a></li>
   <li><a href="#builder">建树方法</a></li>

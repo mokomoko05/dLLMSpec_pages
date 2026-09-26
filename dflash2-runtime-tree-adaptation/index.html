@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="DFlash2 runtime自适应构树实验计划与进度：固定配置对照、固定节点预算深度矩阵和同前缀诊断。Thinking关闭。">
+<title>DFlash2 Runtime 自适应构树实验</title><link rel="stylesheet" href="styles.css">
+</head><body>
+<div class="thinking-status"><strong>Thinking 设置：</strong>关闭（non-thinking；enable_thinking=false）</div>
+<nav class="top-nav" aria-label="站点导航"><a href="../">← 内容目录</a><span>dLLMSpec 实验报告</span></nav>
+<main><article><header class="article-header">
+<h1>DFlash2 Runtime 自适应构树实验</h1><p class="subtitle">固定策略对照、固定节点预算的深度实验与同前缀诊断</p>
+<dl class="article-meta"><div><dt>日期</dt><dd>2026-09-26</dd></div><div><dt>硬件</dt><dd>单张 A100 80GB PCIe</dd></div><div><dt>主机</dt><dd>lengjingwen54-0</dd></div><div><dt>A 阶段</dt><dd>运行中，1/18 配置轮次通过计数审计</dd></div></dl>
+</header>
+<section class="abstract"><h2>摘要</h2>
+<p>本轮沿用 DFlash2 path selector 的分数，研究固定节点预算下的深度与分枝分配，以及这种差异能否被运行时特征预测。先建立候选集内最佳固定 chain/tree 的公平对照，再检验深度分配，最后估计同前缀选择的潜力。</p>
+<p><strong>准备阶段已完成：6/6 配置短 smoke 通过计数审计，深度扩展相关回归 49 项通过。</strong>A 阶段七数据集 screening 已于 14:33 启动，计划 3996 次请求。性能与质量结论待完整矩阵验收后更新。</p>
+<p class="note">进度快照：2026-09-26T14:59:23.359498+08:00（Asia/Shanghai）。本页区分已完成检查、正在运行的矩阵和后续计划；短 smoke 用于运行检查。</p>
+</section>
+<nav class="toc"><h2>目录</h2><ol>
+<li><a href="#setup">固定设置与测试子集</a></li><li><a href="#phase-a">A：固定配置公平对照</a></li><li><a href="#phase-b">B：固定节点预算的深度矩阵</a></li><li><a href="#phase-c">C：同前缀诊断与在线可预测性</a></li><li><a href="#validation">指标、验收和资源管理</a></li><li><a href="#records">原始记录与代码基线</a></li>
+</ol></nav>
+<section id="setup"><h2>1. 固定设置与测试子集</h2>
+<p>Target 为 Qwen3.8-27B，draft 为 Qwen3.8-27B-DFlash2；TP1、BF16、FP32 GDN state、eager、无 CUDA Graph、并发1、greedy、thinking关闭。请求种子为 20260822 + sample_index；max_model_len=4096，max_num_batched_tokens=512，gpu_memory_utilization=0.92。每数据集一条最多128 token的预热排除在正式计时外。</p>
+<p>block size 记为 B，对应最多 B−1 个 draft positions；N 是额外于 anchor 的树节点预算，C 是每个 parent 的最大分叉数。固定同一模型权重、selector、tokenizer、数据文件和请求协议。</p>
+<table><caption>表1. 顺序测试子集与扩展确认规模 · Thinking：关闭</caption><thead><tr><th>数据集</th><th>Screening 请求数</th><th>扩展确认请求数</th></tr></thead><tbody><tr><td>gsm8k</td><td>32</td><td>128</td></tr>
+<tr><td>math500</td><td>32</td><td>128</td></tr>
+<tr><td>humaneval</td><td>32</td><td>128</td></tr>
+<tr><td>mbpp</td><td>32</td><td>128</td></tr>
+<tr><td>livecodebench</td><td>32</td><td>128</td></tr>
+<tr><td>aime25</td><td>30</td><td>30</td></tr>
+<tr><td>mt-bench</td><td>32</td><td>80</td></tr><tr><th>合计</th><th>222</th><th>750</th></tr></tbody></table>
+<p>MT-Bench 只使用 first turn。Screening 输出上限256 tokens；扩展确认上限2048 tokens。750条包含screening子集，因此属于扩展确认，新增样本单独报告。上下文预检v2已与服务usage核对，最长prompt为921 tokens，全部满足计划窗口。</p>
+</section>
+<section id="phase-a"><h2>2. A：固定配置公平对照</h2>
+<p>六个配置均使用未修改的推理基线 <code>f1df7e1</code>。每配置先完成 GSM8K 前2条、输出上限64的smoke，再在相同222条上进行三轮交错复测，共18个配置轮次、3996次正式请求。</p>
+<table><caption>表2. A阶段配置和进度 · Thinking：关闭</caption><thead><tr><th>方法</th><th>B</th><th>N</th><th>C</th><th>最大draft深度</th><th>Smoke计数审计</th><th>Screening</th></tr></thead><tbody><tr><td>Chain</td><td>16</td><td>—</td><td>—</td><td>15</td><td>通过</td><td>待运行或验收（0/3轮）</td></tr>
+<tr><td>Chain</td><td>24</td><td>—</td><td>—</td><td>23</td><td>通过</td><td>第1轮计数审计通过（1/3轮）</td></tr>
+<tr><td>Chain</td><td>48</td><td>—</td><td>—</td><td>47</td><td>通过</td><td>待运行或验收（0/3轮）</td></tr>
+<tr><td>Chain</td><td>64</td><td>—</td><td>—</td><td>63</td><td>通过</td><td>运行中（0/3轮）</td></tr>
+<tr><td>Tree</td><td>16</td><td>43</td><td>4</td><td>15</td><td>通过</td><td>待运行或验收（0/3轮）</td></tr>
+<tr><td>Tree</td><td>16</td><td>42</td><td>16</td><td>15</td><td>通过</td><td>待运行或验收（0/3轮）</td></tr></tbody></table>
+<p>在候选集内选择固定chain与tree后，以相同750条进行三轮扩展确认，并补任务质量检查。保留所有轮次及离散程度，不只报告最快一次。</p>
+</section>
+<section id="phase-b"><h2>3. B：固定节点预算的深度矩阵</h2>
+<p>固定 N=43，改变最大深度和分叉上限，共8个配置。该矩阵检验相同节点预算的分配方式，而不是同时增加节点预算和block size。</p>
+<table><caption>表3. B阶段计划矩阵 · Thinking：关闭</caption><thead><tr><th>B</th><th>最大draft深度</th><th>N</th><th>C</th><th>状态</th></tr></thead><tbody><tr><td>8</td><td>7</td><td>43</td><td>4、16</td><td>待完整模型 smoke</td></tr>
+<tr><td>16</td><td>15</td><td>43</td><td>4、16</td><td>待完整模型 smoke</td></tr>
+<tr><td>24</td><td>23</td><td>43</td><td>4、16</td><td>待完整模型 smoke</td></tr>
+<tr><td>32</td><td>31</td><td>43</td><td>4、16</td><td>待完整模型 smoke</td></tr></tbody></table>
+<p>独立实现 <code>2a0e28ab</code> 将 GPU builder 与 verify 扩展到32个draft positions；49项回归测试通过。所有B配置，包括block8和16对照，都在该修改commit上重测，完整模型smoke后运行相同222条、256输出上限、三轮矩阵。</p>
+<p class="note">A和B使用不同实现commit，分别进行阶段内比较。容量失败与OOM如实记录；若需要较小的共同节点预算，将建立独立矩阵，在所有深度上重测，并保持其口径单独标注。</p>
+</section>
+<section id="phase-c"><h2>4. C：同前缀诊断与在线可预测性</h2>
+<p>计划选 HumanEval、GSM8K、MT-Bench 各16条，在已生成32、96、192个token处取得可用检查点。保存实际prompt和生成token IDs，验证精确前缀、状态恢复及重复回放一致性；EOS不足检查点单独记录。</p>
+<p>比较全局固定配置、任务固定配置与逐前缀事后选择；记录接受长度、失败深度、候选覆盖、离开trunk的位置，以及draft、builder、target、commit成本。相同长draft候选的深度截断作为单独的形态诊断。</p>
+<p>验证前特征包括selector分差、熵、累计路径分数、历史接受长度和失败深度、上下文长度及历史step时间。按请求划分训练和测试，并做留一任务检查。局部oracle是诊断上限；若潜力仅约1%—2%或不超过噪声和控制开销，则不增加复杂在线控制器。有明确潜力时，再以简单档位选择器进行真实E2E对照。</p>
+<p><strong>当前状态：</strong>实现约束已记录，同前缀回放和在线策略实验待执行。</p>
+</section>
+<section id="validation"><h2>5. 指标、验收和资源管理</h2>
+<ul><li>主吞吐为实际 completion tokens 总和除以 client wall 总和，排除加载与预热；另报排除metrics请求的HTTP请求延迟口径。</li>
+<li>同时报告请求平均tau与按验证步汇总tau。原始tau=1+accepted draft/验证步数；停止条件在接受计数之后截断输出，故另报实际输出/验证步数和去掉末步的接受长度分布。</li>
+<li>A各方法都开启scheduler request trace，关闭selector trace。后者会给chain增加CPU构树与拷贝成本，其诊断计时与正式E2E分开。</li>
+<li>短smoke中，chain block24和两种tree各有1/2条输出与chain block16不完全相同。已保留差异，同前缀定位和任务质量评估待完成；计数审计与模型正确性验收分别报告。</li>
+<li>每个完成点先核对请求参数与scheduler计数，数据checksum变化时拒绝复用。预检v1的容器长度统计错误已标记无效，正式运行仅接受正确提取input_ids的v2。</li>
+<li>实验使用同一GPU排他锁，只释放完整命令行匹配的已知占位程序，结束、异常或信号退出后恢复并验证。未知GPU进程不作清理。</li></ul>
+</section>
+<section id="records" class="references"><h2>6. 原始记录与代码基线</h2>
+<p>实验记录已同步远端 main：<code>185a82a9e53acb1c55e3a7f1b693ab8c14befda9</code>。本次仅发布实验目录，未合并推理框架修改。</p>
+<p>实验runner提交 <code>0dd49628f6d469e57bccd4465bc67fd0310101bc</code>；A推理基线 <code>f1df7e149459b0f5327fcd3a760988b34ff5250d</code>；B深度扩展 <code>2a0e28ab181903cbf035f2b7b251631b97179906</code>。运行中的实验worktree保持不变，记录与网页使用独立worktree同步。</p>
+<ol><li><a href="https://github.com/mokomoko05/dLLMSpec/tree/main/agentWorkSpace/20260926_134735_runtime_tree_adaptation">实验计划、脚本、manifest与阶段记录</a></li><li><a href="status.json">本页进度快照JSON</a></li><li><a href="smoke-audit.json">六配置smoke计数与输出一致性审计</a></li><li><a href="../dflash2-gdn-dag-cuda/">历史Tree实现、block-size与参数sweep报告</a></li></ol>
+</section></article></main>
+<footer class="page-footer"><span>DFlash2 Runtime 自适应构树 · 2026-09-26</span><a href="../">返回内容目录</a></footer>
+</body></html>
